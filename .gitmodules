@@ -1,0 +1,11 @@
+[submodule "lib/common_rtl"]
+	path = lib/common_rtl
+	url = ../common-rtl.git
+
+[submodule "lib/keccak-fips202-sv"]
+	path = lib/keccak-fips202-sv
+	url = ../keccak-fips202-sv.git
+
+[submodule "lib/poly-samplers"]
+	path = lib/poly-samplers
+	url = ../poly-samplers.git
