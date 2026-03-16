@@ -7,6 +7,7 @@ on:
   pull_request:
 
 jobs:
+  # --- 1. Slow Simulation (VSIM) ---
   vsim-build:
     runs-on: ubuntu-latest
     steps:
@@ -65,7 +66,7 @@ jobs:
           source env.sh
           make
 
-  # --- 1. Fast Simulation (Verilator) ---
+  # --- 2. Fast Simulation (Verilator) ---
   verilator-build:
     runs-on: ubuntu-latest
     container: verilator/verilator:latest
@@ -75,7 +76,7 @@ jobs:
       - run: apt-get update && apt-get install -y make g++
       - run: make run_all SIM=verilator
 
-  # --- 2. Synthesis Check (Yosys + Slang) ---
+  # --- 3. Synthesis Check (Yosys + Slang) ---
   # Ensures code can actually become hardware (catches latches/bad syntax)
   synthesis-check:
     runs-on: ubuntu-latest
@@ -94,8 +95,8 @@ jobs:
         run: |
           yosys -m slang -p "read_slang -f rtl.f; synth"
 
-  # --- 3. Linter ---
-  lint:
+  # --- 4. Verilog Linter ---
+  verilog-lint:
     runs-on: ubuntu-latest
     permissions:
       checks: write
