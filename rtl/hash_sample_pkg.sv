@@ -11,7 +11,13 @@ package hash_sample_pkg;
         MODE_SAMPLE_CBD    = 3'd1, // Op: SHAKE256  | Sampler: CBD       | Target: s, e, e1, e2
         MODE_HASH_SHA3_256 = 3'd2, // Op: SHA3-256  | Sampler: Bypass    | Target: H(pk), H(m), H(c)
         MODE_HASH_SHA3_512 = 3'd3, // Op: SHA3-512  | Sampler: Bypass    | Target: G(d), G(m, h)
-    MODE_HASH_SHAKE256 = 3'd4  // Op: SHAKE256  | Sampler: Bypass    | Target: J(z, c)
-  } hs_mode_t;
+        MODE_HASH_SHAKE256 = 3'd4  // Op: SHAKE256  | Sampler: Bypass    | Target: J(z, c)
+    } hs_mode_t;
+
+    // AXI4-Stream Widths
+    localparam int HSU_IN_DWIDTH = 256;
+    localparam int HSU_IN_KEEP_WIDTH = HSU_IN_DWIDTH / 8;
+    localparam int HSU_OUT_DWIDTH = 48;
+    localparam int HSU_OUT_KEEP_WIDTH = HSU_OUT_DWIDTH / 8;
 
 endpackage : hash_sample_pkg
