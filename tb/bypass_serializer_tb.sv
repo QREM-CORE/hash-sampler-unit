@@ -1,5 +1,6 @@
 // -----------------------------------------------------------------------------
 // Module      : bypass_serializer_tb
+// Author(s)   : Kiet Le
 // Description : Self-checking testbench for the 256-to-64-bit AXI downsizer.
 //               Verifies protocol compliance, 0-bubble streaming, and the
 //               Keep-Aware dynamic truncation logic.
