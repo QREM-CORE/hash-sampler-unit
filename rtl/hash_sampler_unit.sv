@@ -1,5 +1,5 @@
 /*
- * Module Name: hash_sampler_unit.sv
+ * Module Name: hash_sampler_unit
  * Author(s): Kiet Le
  * Target: FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
  *
