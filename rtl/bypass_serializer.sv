@@ -115,7 +115,7 @@ module bypass_serializer (
         t_last_o  = active && (cnt == final_cnt) && last_reg;
 
         // 4-to-1 MUX out of the latched register
-        case (cnt)
+        unique case (cnt)
             2'd0: begin
                 t_data_o = data_reg[63:0];
                 t_keep_o = keep_reg[7:0];
