@@ -1,33 +1,45 @@
 /*
- * Module Name: bypass_serializer
- * Author(s): Kiet Le
- * Target: FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
+ * Module   : bypass_serializer
+ * Author   : Kiet Le
+ * Target   : FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
  *
  * Description:
- * A 256-to-64-bit AXI downsizer used for serializing 256-bit
- * keccak data to 64-bit data for output (i.e., pure hashing operations).
- * Fully registered payload for high Fmax, supports 0-bubble back-to-back streaming.
+ * AXI4-Stream 256-to-64-bit downsizer for pure hashing bypass.
+ * * Features:
+ * - Registered Payload: Breaks long combinational paths for high Fmax.
+ * - 0-Bubble Streaming: Accepts new 256b words instantly upon finishing the last.
+ * - Keep-Aware Truncation: Dynamically skips empty beats for ragged payloads.
+ *
+ * Usage Notes:
+ * - `t_keep_i` MUST be accurate (e.g., 32'hFFFF_FFFF for a full valid word).
+ * - `t_valid_i` should only be asserted during pure hash modes.
+ *
+ * Keep-Byte Mapping (256b -> 64b):
+ * Chunk 0: data[63:0]    | keep[7:0]
+ * Chunk 1: data[127:64]  | keep[15:8]
+ * Chunk 2: data[191:128] | keep[23:16]
+ * Chunk 3: data[255:192] | keep[31:24]
  */
 
 import hash_sample_pkg::*;
 
 module bypass_serializer (
-    input  wire                            clk,
-    input  wire                            rst,
+    input  wire                              clk,
+    input  wire                              rst,
 
     // AXI4-Stream Sink
-    input  wire  [255:0]                    t_data_i,
-    input  wire                             t_valid_i,
-    input  wire                             t_last_i,
-    input  wire  [31:0]                     t_keep_i,
-    output logic                            t_ready_o,
+    input  wire  [255:0]                     t_data_i,
+    input  wire                              t_valid_i,
+    input  wire                              t_last_i,
+    input  wire  [31:0]                      t_keep_i,
+    output logic                             t_ready_o,
 
     // AXI4-Stream Source
-    output logic [HSU_OUT_DWIDTH-1:0]       t_data_o,
-    output logic                            t_valid_o,
-    output logic                            t_last_o,
-    output logic [HSU_OUT_KEEP_WIDTH-1:0]   t_keep_o,
-    input  wire                             t_ready_i
+    output logic [HSU_OUT_DWIDTH-1:0]        t_data_o,
+    output logic                             t_valid_o,
+    output logic                             t_last_o,
+    output logic [HSU_OUT_KEEP_WIDTH-1:0]    t_keep_o,
+    input  wire                              t_ready_i
 );
 
     // ==========================================================
@@ -39,10 +51,27 @@ module bypass_serializer (
 
     logic [1:0]   cnt;
     logic         active;
+    logic [1:0]   final_cnt;
+
+    // ==========================================================
+    // Combinational Logic: Dynamic End-of-Word Calculation
+    // ==========================================================
+    // Determine the last valid 64-bit chunk based on the latched t_keep
+    always_comb begin
+        if (keep_reg[31:24] != 8'd0) begin
+            final_cnt = 2'd3;
+        end else if (keep_reg[23:16] != 8'd0) begin
+            final_cnt = 2'd2;
+        end else if (keep_reg[15:8] != 8'd0) begin
+            final_cnt = 2'd1;
+        end else begin
+            final_cnt = 2'd0;
+        end
+    end
 
     // We are ready to accept new data if we are IDLE (!active)
-    // OR if we are on the very last chunk (cnt==3) and the downstream is accepting it.
-    assign t_ready_o = !active || (active && (cnt == 2'd3) && t_ready_i);
+    // OR if we are on the dynamically calculated last chunk and downstream accepts.
+    assign t_ready_o = !active || (active && (cnt == final_cnt) && t_ready_i);
 
     // ==========================================================
     // Sequential Logic: Control and Latching
@@ -62,8 +91,8 @@ module bypass_serializer (
             end
             // 2. Advance the counter if active and downstream accepts
             else if (active && t_ready_i) begin
-                if (cnt == 2'd3) begin
-                    active <= 1'b0; // Done with this block
+                if (cnt == final_cnt) begin
+                    active <= 1'b0; // Done with this block early!
                 end else begin
                     cnt <= cnt + 2'd1;
                 end
@@ -82,8 +111,8 @@ module bypass_serializer (
         // Output is valid as long as we have active registered data
         t_valid_o = active;
 
-        // Only assert t_last on the 4th beat AND if the original block had t_last
-        t_last_o  = active && (cnt == 2'd3) && last_reg;
+        // Only assert t_last on the final valid chunk AND if the original block had t_last
+        t_last_o  = active && (cnt == final_cnt) && last_reg;
 
         // 4-to-1 MUX out of the latched register
         case (cnt)
