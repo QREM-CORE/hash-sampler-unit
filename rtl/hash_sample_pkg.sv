@@ -17,7 +17,7 @@ package hash_sample_pkg;
     // AXI4-Stream Widths
     localparam int HSU_IN_DWIDTH = 256;
     localparam int HSU_IN_KEEP_WIDTH = HSU_IN_DWIDTH / 8;
-    localparam int HSU_OUT_DWIDTH = 48;
+    localparam int HSU_OUT_DWIDTH = 64;
     localparam int HSU_OUT_KEEP_WIDTH = HSU_OUT_DWIDTH / 8;
 
 endpackage : hash_sample_pkg

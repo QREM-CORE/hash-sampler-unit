@@ -1,10 +1,15 @@
-# --- Packages (Must be compiled first) ---
+# --- MAJOR SUBMODULES ---
+-f lib/keccak-fips202-sv/rtl.f
+-f lib/poly-samplers/rtl.f
+
+# --- Common RTL ---
+lib/common_rtl/rtl/axis_if.sv
+
+# --- Packages ---
 rtl/hash_sample_pkg.sv
 
-# --- MAJOR SUBMODULES ---
-lib/keccak-fips202-sv/rtl/*.sv
-lib/poly-samplers/rtl/*.sv
-lib/common_rtl/rtl/*.sv
+# --- Modules ---
+rtl/bypass_serializer.sv
 
-# --- HASH SAMPLER UNIT TOP LEVEL MODULE ---
-rtl/hash_sampler_unit.sv
+# --- HASH SAMPLER UNIT TOP LEVEL ---
+#rtl/hash_sampler_unit.sv
