@@ -9,3 +9,6 @@
 [submodule "lib/poly-samplers"]
 	path = lib/poly-samplers
 	url = ../poly-samplers.git
+[submodule "build-tools"]
+	path = build-tools
+	url = ../build-tools.git
