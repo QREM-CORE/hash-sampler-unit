@@ -231,21 +231,35 @@ module bypass_serializer_tb;
     end
 
     // =========================================================================
-    // Protocol Assertions (Concurrent)
+    // Protocol Assertions (Procedural / Verilator-Safe)
     // =========================================================================
-    // synthesis translate_off
+    logic [HSU_OUT_DWIDTH-1:0]     prev_t_data_o;
+    logic [HSU_OUT_KEEP_WIDTH-1:0] prev_t_keep_o;
+    logic                          prev_t_last_o;
+    logic                          prev_t_valid_o;
+    logic                          stall_condition;
 
-    // 1. Data/Keep/Last must remain stable if valid is high but downstream is stalled
-    assert property (@(posedge clk) disable iff (rst)
-        (t_valid_o && !t_ready_i) |=>
-        ($stable(t_data_o) && $stable(t_keep_o) && $stable(t_last_o)))
-        else $error("SVA VIOLATION: Output payload changed while stalled.");
+    always_ff @(posedge clk) begin
+        if (!rst) begin
+            // If we were stalled on the PREVIOUS cycle, the data on THIS cycle must match
+            if (stall_condition) begin
+                if (t_data_o !== prev_t_data_o || t_keep_o !== prev_t_keep_o || t_last_o !== prev_t_last_o) begin
+                    $error("VIOLATION: Output payload changed while stalled.");
+                    errors_detected++; // Hook into your existing error counter
+                end
+                if (t_valid_o !== 1'b1) begin
+                    $error("VIOLATION: t_valid_o dropped without handshake.");
+                    errors_detected++;
+                end
+            end
 
-    // 2. Valid cannot drop until the downstream module accepts the data
-    assert property (@(posedge clk) disable iff (rst)
-        (t_valid_o && !t_ready_i) |=> t_valid_o)
-        else $error("SVA VIOLATION: t_valid_o dropped without handshake.");
-
-    // synthesis translate_on
+            // Capture the state for the next cycle's check
+            stall_condition <= t_valid_o && !t_ready_i;
+            prev_t_data_o   <= t_data_o;
+            prev_t_keep_o   <= t_keep_o;
+            prev_t_last_o   <= t_last_o;
+            prev_t_valid_o  <= t_valid_o;
+        end
+    end
 
 endmodule
