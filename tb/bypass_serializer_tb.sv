@@ -120,10 +120,10 @@ module bypass_serializer_tb;
         input logic [31:0]  k,
         input logic         l
     );
-        t_data_i  = d;
-        t_keep_i  = k;
-        t_last_i  = l;
-        t_valid_i = 1'b1;
+        t_data_i  <= d;
+        t_keep_i  <= k;
+        t_last_i  <= l;
+        t_valid_i <= 1'b1;
 
         push_expected(d, k, l);
 
@@ -131,8 +131,8 @@ module bypass_serializer_tb;
         @(posedge clk);
         while (!t_ready_o) @(posedge clk);
 
-        t_valid_i = 1'b0;
-        t_last_i  = 1'b0;
+        t_valid_i <= 1'b0;
+        t_last_i  <= 1'b0;
     endtask
 
     // Generate random 256-bit data
@@ -185,9 +185,9 @@ module bypass_serializer_tb;
             begin
                 for (int i = 0; i < 100; i++) begin
                     @(posedge clk);
-                    t_ready_i = ($urandom % 2 == 0);
+                    t_ready_i <= ($urandom % 2 == 0);
                 end
-                t_ready_i = 1'b1; // Ensure it finishes
+                t_ready_i <= 1'b1; // Ensure it finishes
             end
             // Thread 2: Drive data
             begin
