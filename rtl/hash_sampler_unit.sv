@@ -17,8 +17,6 @@ module hash_sampler_unit (
     // Control
     input   wire                            start,
     input   hs_mode_t                       hsu_mode_i,
-    output  logic                           done,
-
     // AXI4-Stream Sink
     input  wire  [HSU_IN_DWIDTH-1:0]        t_data_i,
     input  wire                             t_valid_i,
@@ -41,6 +39,7 @@ module hash_sampler_unit (
     logic                                   keccak_start;
     logic [MODE_SEL_WIDTH-1:0]              keccak_mode;
     logic                                   keccak_stop;
+    logic [XOF_LEN_WIDTH-1:0]               keccak_xof_len;
 
     logic [DWIDTH-1:0]                      keccak_t_data_i;
     logic                                   keccak_t_valid_i;
@@ -56,7 +55,6 @@ module hash_sampler_unit (
 
     // Sample NTT Logic
     logic                                   sample_ntt_start;
-    logic                                   sample_ntt_done;
 
     logic [HSU_IN_DWIDTH-1:0]               sample_ntt_t_data_i;
     logic                                   sample_ntt_t_valid_i;
@@ -71,8 +69,8 @@ module hash_sampler_unit (
     logic                                   sample_ntt_t_ready_i;
 
     // Sample CBD Logic
-    logic                                   sample_cbd_start;
-    logic                                   sample_cbd_done;
+    logic                                   sample_cbd_start_i;
+    logic                                   sample_cbd_is_eta3_i;
 
     logic [HSU_IN_DWIDTH-1:0]               sample_cbd_t_data_i;
     logic                                   sample_cbd_t_valid_i;
@@ -86,6 +84,19 @@ module hash_sampler_unit (
     logic [HSU_OUT_KEEP_WIDTH-1:0]          sample_cbd_t_keep_o;
     logic                                   sample_cbd_t_ready_i;
 
+    // Bypass Serializer Logic
+    logic                                   bypass_t_data_i;
+    logic                                   bypass_t_valid_i;
+    logic                                   bypass_t_last_i;
+    logic [HSU_IN_KEEP_WIDTH-1:0]           bypass_t_keep_i;
+    logic                                   bypass_t_ready_o;
+
+    logic [HSU_OUT_DWIDTH-1:0]              bypass_t_data_o;
+    logic                                   bypass_t_valid_o;
+    logic                                   bypass_t_last_o;
+    logic [HSU_OUT_KEEP_WIDTH-1:0]          bypass_t_keep_o;
+    logic                                   bypass_t_ready_i;
+
     // ==========================================================
     // Module Instantiations
     // ==========================================================
@@ -96,8 +107,9 @@ module hash_sampler_unit (
         .rst            (rst),
 
         .start_i        (keccak_start),
-        .keccak_mode_i  (keccak_mode),
         .stop_i         (keccak_stop),
+        .keccak_mode_i  (keccak_mode),
+        .xof_len_i      (keccak_xof_len),
 
         .t_data_i       (keccak_t_data_i),
         .t_valid_i      (keccak_t_valid_i),
@@ -124,15 +136,11 @@ module hash_sampler_unit (
     assign keccak_t_ready_i     = ;
 
     // --- Sample NTT Module ---
-    sample_ntt #(
-        .DWIDTH(DWIDTH),
-        .KEEP_WIDTH(KEEP_WIDTH)
-    ) sample_ntt_inst (
+    sample_ntt sample_ntt_inst (
         .clk            (clk),
         .rst            (rst),
 
         .start_i        (sample_ntt_start),
-        .stop_i         (sample_ntt_stop),
 
         .t_data_i       (sample_ntt_t_data_i),
         .t_valid_i      (sample_ntt_t_valid_i),
@@ -158,15 +166,12 @@ module hash_sampler_unit (
     assign sample_ntt_t_ready_i     = ;
 
     // --- Sample CBD Module ---
-    sample_cbd #(
-        .DWIDTH(DWIDTH),
-        .KEEP_WIDTH(KEEP_WIDTH)
-    ) sample_cbd_inst (
+    sample_cbd sample_cbd_inst (
         .clk            (clk),
         .rst            (rst),
 
-        .start_i        (sample_cbd_start),
-        .stop_i         (sample_cbd_stop),
+        .start_i        (sample_cbd_start_i),
+        .is_eta3_i      (sample_cbd_is_eta3_i),
 
         .t_data_i       (sample_cbd_t_data_i),
         .t_valid_i      (sample_cbd_t_valid_i),
@@ -190,6 +195,31 @@ module hash_sampler_unit (
     assign sample_cbd_t_keep_i      = ;
 
     assign sample_cbd_t_ready_i     = ;
+
+    // --- Bypass Serializer Module ---
+    bypass_serializer bypass_serializer_inst (
+        .clk            (clk),
+        .rst            (rst),
+
+        .t_data_i       (bypass_t_data_i),
+        .t_valid_i      (bypass_t_valid_i),
+        .t_last_i       (bypass_t_last_i),
+        .t_keep_i       (bypass_t_keep_i),
+        .t_ready_o      (bypass_t_ready_o),
+
+        .t_data_o       (bypass_t_data_o),
+        .t_valid_o      (bypass_t_valid_o),
+        .t_last_o       (bypass_t_last_o),
+        .t_keep_o       (bypass_t_keep_o),
+        .t_ready_i      (bypass_t_ready_i)
+    );
+    // Assign Bypass Serializer Inputs
+    assign bypass_t_data_i      = ;
+    assign bypass_t_valid_i     = ;
+    assign bypass_t_last_i      = ;
+    assign bypass_t_keep_i      = ;
+
+    assign bypass_t_ready_i     = ;
 
     // ==========================================================
     // Top-Level Control Logic
