@@ -133,10 +133,7 @@ module hash_sampler_unit (
     assign t_ready_o        = keccak_t_ready_o;
 
     // --- Sample NTT Module ---
-    sample_ntt #(
-        .DWIDTH     (64), // Fixed to Keccak 64-bit output
-        .KEEP_WIDTH (8)
-    ) sample_ntt_inst (
+    sample_ntt sample_ntt_inst (
         .clk        (clk),
         .rst        (rst),
         .start      (sample_ntt_start),
@@ -161,10 +158,7 @@ module hash_sampler_unit (
     assign sample_ntt_t_keep_i = keccak_t_keep_o;
 
     // --- Sample CBD Module ---
-    sample_poly_cbd #(
-        .DWIDTH     (64), // Fixed to Keccak 64-bit output
-        .KEEP_WIDTH (8)
-    ) sample_cbd_inst (
+    sample_poly_cbd sample_cbd_inst (
         .clk        (clk),
         .rst        (rst),
         .start      (sample_cbd_start),
@@ -219,7 +213,7 @@ module hash_sampler_unit (
         // ------------------------------------------------------
         // Routing based on active hs_mode_t
         // ------------------------------------------------------
-        case (hsu_mode_i)
+        unique case (hsu_mode_i)
 
             MODE_SAMPLE_NTT: begin
                 keccak_mode_sel      = SHAKE128;
@@ -287,10 +281,6 @@ module hash_sampler_unit (
                 t_last_o             = keccak_t_last_o;
 
                 keccak_t_ready_i     = t_ready_i;
-            end
-
-            default: begin
-                keccak_mode_sel      = SHA3_256;
             end
         endcase
     end
