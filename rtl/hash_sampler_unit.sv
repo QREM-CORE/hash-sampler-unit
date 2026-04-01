@@ -222,7 +222,7 @@ module hash_sampler_unit (
         case (hsu_mode_i)
 
             MODE_SAMPLE_NTT: begin
-                keccak_mode_sel      = MODE_SHAKE128;
+                keccak_mode_sel      = SHAKE128;
 
                 // Route Keccak -> NTT
                 sample_ntt_t_valid_i = keccak_t_valid_o;
@@ -238,7 +238,7 @@ module hash_sampler_unit (
             end
 
             MODE_SAMPLE_CBD: begin
-                keccak_mode_sel      = MODE_SHAKE256;
+                keccak_mode_sel      = SHAKE256;
 
                 // Route Keccak -> CBD
                 sample_cbd_t_valid_i = keccak_t_valid_o;
@@ -254,7 +254,7 @@ module hash_sampler_unit (
             end
 
             MODE_HASH_SHA3_256: begin
-                keccak_mode_sel      = MODE_SHA3_256;
+                keccak_mode_sel      = SHA3_256;
 
                 // Route Keccak directly to output
                 t_data_o             = keccak_t_data_o;
@@ -266,7 +266,7 @@ module hash_sampler_unit (
             end
 
             MODE_HASH_SHA3_512: begin
-                keccak_mode_sel      = MODE_SHA3_512;
+                keccak_mode_sel      = SHA3_512;
 
                 // Route Keccak directly to output
                 t_data_o             = keccak_t_data_o;
@@ -278,7 +278,7 @@ module hash_sampler_unit (
             end
 
             MODE_HASH_SHAKE256: begin
-                keccak_mode_sel      = MODE_SHAKE256;
+                keccak_mode_sel      = SHAKE256;
 
                 // Route Keccak directly to output
                 t_data_o             = keccak_t_data_o;
@@ -290,7 +290,7 @@ module hash_sampler_unit (
             end
 
             default: begin
-                keccak_mode_sel      = MODE_SHA3_256;
+                keccak_mode_sel      = SHA3_256;
             end
         endcase
     end
