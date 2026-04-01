@@ -2,12 +2,37 @@
  * Module Name: hash_sampler_unit
  * Author(s): Kiet Le
  * Target: FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
- *
  * Description:
- * - Top-level wrapper that encapsulates the Keccak Core and the ML-KEM Samplers.
- * - Routes the 64-bit AXI stream out of the Keccak Core either directly to the
- * output (for plain hashing/XOF) or through the appropriate Rejection/CBD sampler.
- * - Implements a unified Demux/Mux router driven by the 5 hs_mode_t states.
+ * - Unified Hashing and Sampling Unit (HSU) for ML-KEM (Kyber) Hardware Accelerators.
+ * - Encapsulates a high-performance Keccak Core and various ML-KEM Samplers.
+ * - Routes the 64-bit AXI4-Stream output of the Keccak Core either directly to the
+ *   top-level (Bypass Mode) or through specialized Rejection (NTT) and CBD samplers.
+ * - Features a dynamic demux/mux routing architecture controlled by the 'hsu_mode_i' enum.
+ *
+ * Performance & Latency:
+ * - Direct Hashing: Latency depends solely on Keccak Core (24 cycles per 1600-bit permutation).
+ * - NTT Sampling: Produces exactly 256 coefficients; latency varies due to rejection logic.
+ * - CBD Sampling: Produces exactly 256 coefficients; deterministic latency based on η (eta).
+ *
+ * Usage Contract:
+ * - 'hsu_mode_i' and 'is_eta3_i' must be stable when 'start_i' is pulsed for exactly one cycle.
+ * - Input/Output data follows standard AXI4-Stream (t_data, t_valid, t_ready, t_last, t_keep) protocols.
+ * - 'xof_len_i' defines the total output length in bytes for Keccak XOF modes (0 = infinite).
+ *
+ * Mode Summary (hsu_mode_i):
+ * -----------------------------------------------------------------------------
+ * | Enum Name          | Keccak Mode | Sampler Layer | Security (η) | Target  |
+ * |--------------------|-------------|---------------|--------------|---------|
+ * | MODE_SAMPLE_NTT    | SHAKE128    | Rejection     | N/A          | Mat A   |
+ * | MODE_SAMPLE_CBD    | SHAKE256    | CBD           | η=2 or η=3   | s, e    |
+ * | MODE_HASH_SHA3_256 | SHA3-256    | Bypass        | N/A          | H(p,m,c)|
+ * | MODE_HASH_SHA3_512 | SHA3-512    | Bypass        | N/A          | G(d,m,h)|
+ * | MODE_HASH_SHAKE256 | SHAKE256    | Bypass        | N/A          | J(z, c) |
+ * -----------------------------------------------------------------------------
+ *
+ * Interface Notes:
+ * - 48-bit sampler outputs are zero-padded to 64-bit 't_data_o' {16'b0, data[47:0]}.
+ * - 't_keep_o' reflects valid 6-byte chunks (6'h3F) for sampler outputs.
  */
 
 `default_nettype none
