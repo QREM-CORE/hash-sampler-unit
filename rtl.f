@@ -5,8 +5,5 @@
 # --- Packages ---
 rtl/hash_sample_pkg.sv
 
-# --- Modules ---
-rtl/bypass_serializer.sv
-
 # --- HASH SAMPLER UNIT TOP LEVEL ---
 rtl/hash_sampler_unit.sv
