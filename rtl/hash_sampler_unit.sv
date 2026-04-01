@@ -199,7 +199,7 @@ module hash_sampler_unit (
         // ------------------------------------------------------
         // Default Assignments (Prevents Latches)
         // ------------------------------------------------------
-        keccak_mode_sel      = MODE_SHA3_256;
+        keccak_mode_sel      = SHA3_256;
 
         // Downstream Valid Gates (Demux)
         sample_ntt_t_valid_i = 1'b0;

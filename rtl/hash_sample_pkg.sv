@@ -2,7 +2,12 @@ package hash_sample_pkg;
     // Import Keccak types
     import keccak_pkg::*;
     // Export them so modules importing THIS package also get Keccak types
-    export keccak_pkg::*;
+    export keccak_pkg::XOF_LEN_WIDTH;
+    export keccak_pkg::keccak_mode;
+    export keccak_pkg::SHA3_256;
+    export keccak_pkg::SHA3_512;
+    export keccak_pkg::SHAKE128;
+    export keccak_pkg::SHAKE256;
 
     // Enumerated type for the Hash-Sampler Unit modes
     // logic [2:0] provides enough width for the 5 defined modes.
