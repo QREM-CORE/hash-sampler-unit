@@ -81,8 +81,8 @@ module hash_sampler_unit_tb();
     int          cfg_in_bytes;
     int          cfg_out_chunks;
 
-    logic [63:0] input_mem    [0:127]; // Sufficient for ML-KEM
-    logic [63:0] expected_mem [0:127]; // 64 beats for samplers
+    logic [63:0] input_mem    [128]; // Sufficient for ML-KEM
+    logic [63:0] expected_mem [128]; // 64 beats for samplers
     int          errors;
 
     // =========================================================
