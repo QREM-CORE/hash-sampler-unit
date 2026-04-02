@@ -15,9 +15,10 @@ module hash_sampler_unit (
     input   wire                            rst,
 
     // Control
-    input   wire                            start,
-    input   hs_mode_t                       hsu_mode_i,
-    output  logic                           done,
+    input  wire                                 start_i,
+    input  wire hs_mode_t                       hsu_mode_i,
+    input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,  // Keccak XOF length (in bytes)
+    input  wire                                 is_eta3_i,  // 1 = ML-KEM-768/1024 (η=3), 0 = ML-KEM-512 (η=2)
 
     // AXI4-Stream Sink
     input  wire  [HSU_IN_DWIDTH-1:0]        t_data_i,

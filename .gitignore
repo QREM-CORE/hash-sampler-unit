@@ -5,3 +5,4 @@ transcript
 *.log
 *.txt
 *build.f
+verif/test_vectors/*
