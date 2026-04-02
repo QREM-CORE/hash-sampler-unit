@@ -6,3 +6,4 @@ transcript
 *.txt
 *build.f
 verif/test_vectors/*
+obj_dir/

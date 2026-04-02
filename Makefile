@@ -12,7 +12,8 @@ VECTOR_STAMP  := verif/test_vectors/.generated_stamp
 $(VECTOR_STAMP): $(VECTOR_JSON) $(VECTOR_SCRIPT)
 	@echo "=== Regenerating Test Vectors from JSON ==="
 	cd verif && python3 generate_tb_files.py
-	@touch $(VECTOR_STAMP)
+# 3. Local Cleanup
+EXTRA_CLEAN = verif/test_vectors/
 
 # =========================================================
 # Hash Sampler Unit Override Target

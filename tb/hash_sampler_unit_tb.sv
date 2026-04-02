@@ -37,7 +37,7 @@ module hash_sampler_unit_tb();
     logic clk = 0;
     logic rst = 1;
 
-    // Verilator 5+ supports this if compiled with --timing.
+    // Note: Verilator 5+ supports this if compiled with --timing.
     // ModelSim supports this natively.
     always #5 clk = ~clk;
 
