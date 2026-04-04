@@ -1,6 +1,6 @@
 # ML-KEM Hash-Sampler Unit (HSU)
 
-[![Build Status](https://github.com/QREM-CORE/hash-sampler-unit/actions/workflows/ci.yml/badge.svg)](https://github.com/QREM-CORE/hash-sampler-unit/actions)
+[![Build Status](https://github.com/QREM-CORE/hash-sampler-unit/actions/workflows/pr.yml/badge.svg)](https://github.com/QREM-CORE/hash-sampler-unit/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Standard: FIPS 203](https://img.shields.io/badge/Standard-FIPS%20203-blue.svg)](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf)
 
@@ -16,10 +16,10 @@ The HSU features a dynamic demux/mux routing architecture that allows the Keccak
 
 ```mermaid
 graph LR
-    subgraph HSU ["Hash-Sampler Unit (HSU)"]
+    subgraph HSU["Hash-Sampler Unit (HSU)"]
         direction LR
         
-        S_AXI ["AXI-S Sink (In)"] --> KCORE ["Keccak Core <br/>(1-Cycle Round)"]
+        S_AXI["AXI-S Sink (In)"] --> KCORE["Keccak Core <br/>(1-Cycle Round)"]
         
         KCORE --> DMUX["Routing Demux"]
         
@@ -30,7 +30,7 @@ graph LR
         NTT --> MUX
         CBD --> MUX
         
-        MUX --> M_AXI ["AXI-S Source (Out)"]
+        MUX --> M_AXI["AXI-S Source (Out)"]
     end
     
     style HSU fill:#f9f9f9,stroke:#333,stroke-width:2px
