@@ -46,7 +46,7 @@ module hash_sampler_unit (
 
     // Control
     input  wire                                 start_i,
-    input  hs_mode_t                            hsu_mode_i,
+    input  wire hs_mode_t                       hsu_mode_i,
     input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,  // Keccak XOF length (in bytes)
     input  wire                                 is_eta3_i,  // 1 = ML-KEM-768/1024 (η=3), 0 = ML-KEM-512 (η=2)
 
