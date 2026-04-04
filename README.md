@@ -18,27 +18,28 @@ The HSU features a dynamic demux/mux routing architecture that allows the Keccak
 graph LR
     subgraph HSU["Hash-Sampler Unit (HSU)"]
         direction LR
-        
-        S_AXI["AXI-S Sink (In)"] --> KCORE["Keccak Core <br/>(1-Cycle Round)"]
-        
+        S_AXI["AXI-S Sink (In)"] --> KCORE["Keccak Core<br/>(1-Cycle Round)"]
         KCORE --> DMUX["Routing Demux"]
-        
-        DMUX -- SHAKE128 --> NTT["Sample NTT <br/>(Rejection)"]
-        DMUX -- SHAKE256 --> CBD["Sample CBD <br/>(η=2,3)"]
+        DMUX -- SHAKE128 --> NTT["Sample NTT<br/>(Rejection)"]
+        DMUX -- SHAKE256 --> CBD["Sample CBD<br/>(η=2,3)"]
         DMUX -- Bypass --> MUX["Output Mux"]
-        
         NTT --> MUX
         CBD --> MUX
-        
         MUX --> M_AXI["AXI-S Source (Out)"]
     end
-    
-    style HSU fill:#f9f9f9,stroke:#333,stroke-width:2px
-    style KCORE fill:#d4edda,stroke:#28a745,stroke-width:2px
-    style NTT fill:#fff3cd,stroke:#ffc107,stroke-width:2px
-    style CBD fill:#fff3cd,stroke:#ffc107,stroke-width:2px
-    style S_AXI fill:#e2e3e5,stroke:#383d41
-    style M_AXI fill:#e2e3e5,stroke:#383d41
+
+    %% Premium Hardware Styling
+    classDef io fill:#f5f5f5,stroke:#263238,color:#212121,font-weight:bold;
+    classDef core fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20,font-weight:bold;
+    classDef router fill:#e3f2fd,stroke:#1565c0,color:#0d47a1,font-weight:bold;
+    classDef sampler fill:#fffde7,stroke:#f9a825,color:#f57f17,font-weight:bold;
+    classDef hsu fill:none,stroke:#90a4ae,stroke-width:2px,stroke-dasharray: 5 5;
+
+    class S_AXI,M_AXI io;
+    class KCORE core;
+    class DMUX,MUX router;
+    class NTT,CBD sampler;
+    class HSU hsu;
 ```
 
 ### Key Technical Specs:
