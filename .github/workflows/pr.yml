@@ -76,10 +76,11 @@ jobs:
       - run: apt-get update && apt-get install -y make g++ python3
       - run: make run_all SIM=verilator
 
-  # --- 3. Synthesis Check (Yosys + Slang) ---
-  # Ensures code can actually become hardware (catches latches/bad syntax)
-  synthesis-check:
+  # --- 3. Synthesis Metrics (Yosys + Slang) ---
+  synthesis-metrics:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write  # MUST HAVE THIS TO POST COMMENTS
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -91,14 +92,26 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Dummy Synthesis with Slang
+      - name: Generate Filelist and Run Metrics Engine
         run: |
-          # 1. Generate the flattened filelist using our build-tools infrastructure
-          # This creates build.f with fully resolved absolute paths
+          # 1. Generate flattened filelist
           make build.f
 
-          # 2. Feed the flattened filelist natively to Slang
-          yosys -m slang -p "read_slang -f build.f; synth -top hash_sampler_unit"
+          # 2. Run the new Python Metrics Engine
+          python3 build-tools/scripts/synth_metrics.py
+
+          # 3. Output to GitHub Action Step Summary (visible on the Actions UI)
+          cat pr_comment.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Post Metrics Comment on PR
+        # Only run this step if the workflow was triggered by a Pull Request
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          # sticky-pull-request-comment will edit the existing comment if it already
+          # exists, preventing spam on PRs with multiple commits!
+          recreate: true
+          path: pr_comment.md
 
   # --- 4. Verilog Linter ---
   verilog-lint:
