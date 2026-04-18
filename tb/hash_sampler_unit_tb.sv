@@ -55,13 +55,6 @@ module hash_sampler_unit_tb();
     logic [7:0]           t_keep_i;
     logic                 t_ready_o;
 
-    logic [63:0]          t_data_o;
-    logic                 t_valid_o;
-    logic                 t_last_o;
-    logic [7:0]           t_keep_o;
-    logic                 t_ready_i;
-
-    // Poly Memory Writer Interface
     logic [3:0]           poly_id_i = '0;
     logic                 hsu_req_o;
     logic [3:0]           hsu_poly_id_o;
@@ -74,7 +67,6 @@ module hash_sampler_unit_tb();
     // Seed Memory Port
     logic [2:0]           seed_id_i = '0;
     logic                 input_sel_i = 1'b0;
-    logic                 output_sel_i = 1'b1;  // default AXI bypass
     logic                 seed_req_o;
     logic                 seed_we_o;
     logic [2:0]           seed_id_o;
@@ -150,7 +142,6 @@ module hash_sampler_unit_tb();
 
         while (beat_idx < cfg_out_chunks) begin
             // chance to drop ready low to test FIFO backpressure
-            t_ready_i    <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
             hsu_stall_i  <= ($urandom_range(0, 99) < 20) ? 1'b1 : 1'b0;
             seed_ready_i <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
 
@@ -165,8 +156,9 @@ module hash_sampler_unit_tb();
                     data_valid_pulse = 1'b1;
                 end
             end else begin
-                if (t_valid_o && t_ready_i) begin
-                    received_data = t_data_o;
+                // Check hashing output via Seed Memory interface
+                if (seed_req_o && seed_ready_i) begin
+                    received_data = seed_wdata_o;
                     data_valid_pulse = 1'b1;
                 end
             end
@@ -179,7 +171,6 @@ module hash_sampler_unit_tb();
                 beat_idx++;
             end
         end
-        t_ready_i    <= 1'b0;
         hsu_stall_i  <= 1'b0;
         seed_ready_i <= 1'b0;
     endtask
@@ -189,7 +180,7 @@ module hash_sampler_unit_tb();
     // =========================================================
     initial begin
         errors = 0;
-        start_i = 0; t_valid_i = 0; t_ready_i = 0;
+        start_i = 0; t_valid_i = 0;
 
         // Grab the test directory from Makefile argument
         if (!$value$plusargs("TEST_DIR=%s", test_dir)) begin

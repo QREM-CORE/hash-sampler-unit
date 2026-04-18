@@ -60,7 +60,6 @@ module hash_sampler_unit #(
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
     input  wire [$clog2(NUM_SEEDS)-1:0]         seed_id_i,
     input  wire                                 input_sel_i,
-    input  wire                                 output_sel_i,
 
     // AXI4-Stream Sink
     input  wire [HSU_IN_DWIDTH-1:0]             t_data_i,
@@ -68,13 +67,6 @@ module hash_sampler_unit #(
     input  wire                                 t_last_i,
     input  wire [HSU_IN_KEEP_WIDTH-1:0]         t_keep_i,
     output logic                                t_ready_o,
-
-    // AXI4-Stream Source
-    output logic [HSU_OUT_DWIDTH-1:0]           t_data_o,
-    output logic                                t_valid_o,
-    output logic                                t_last_o,
-    output logic [HSU_OUT_KEEP_WIDTH-1:0]       t_keep_o,
-    input  wire                                 t_ready_i,
 
     // --- Poly Memory Writer Output (sampler modes) ---
     output logic                               hsu_req_o,
@@ -306,11 +298,6 @@ module hash_sampler_unit #(
         keccak_t_ready_i     = 1'b0;
 
         // Top Level Outputs
-        t_data_o             = '0;
-        t_valid_o            = 1'b0;
-        t_last_o             = 1'b0;
-        t_keep_o             = '0;
-
         hsu_req_o            = 1'b0;
         hsu_poly_id_o        = poly_id_i;
         hsu_wr_en_o          = 4'b0;
@@ -364,21 +351,12 @@ module hash_sampler_unit #(
                 else if (hsu_mode_i == MODE_HASH_SHA3_512) keccak_mode_sel = SHA3_512;
                 else keccak_mode_sel = SHAKE256;
 
-                if (output_sel_i) begin
-                    // Route Keccak directly to output
-                    t_data_o             = keccak_t_data_o;
-                    t_keep_o             = keccak_t_keep_o;
-                    t_valid_o            = keccak_t_valid_o;
-                    t_last_o             = keccak_t_last_o;
+                // Route Keccak always to Seed Memory
+                seed_req_o           = keccak_t_valid_o;
+                seed_we_o            = 1'b1;
+                seed_wdata_o         = keccak_t_data_o;
 
-                    keccak_t_ready_i     = t_ready_i;
-                end else begin
-                    seed_req_o           = keccak_t_valid_o;
-                    seed_we_o            = 1'b1;
-                    seed_wdata_o         = keccak_t_data_o;
-
-                    keccak_t_ready_i     = seed_ready_i;
-                end
+                keccak_t_ready_i     = seed_ready_i;
             end
         endcase
     end
