@@ -185,10 +185,14 @@ module hash_sampler_unit #(
     assign seed_beat_last = (seed_rd_beat_cnt == SEED_BEATS - 1);
 
     always_ff @(posedge clk or posedge rst) begin
-        if (rst || start_i)
+        if (rst) begin
             seed_rd_beat_cnt <= '0;
-        else if (input_sel_i && seed_rvalid_i && keccak_t_ready_o)
-            seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
+        end else begin
+            if (start_i)
+                seed_rd_beat_cnt <= '0;
+            else if (input_sel_i && seed_rvalid_i && keccak_t_ready_o)
+                seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
+        end
     end
 
     // Keccak Sink Input
@@ -280,10 +284,14 @@ module hash_sampler_unit #(
     logic [$clog2(SEED_BEATS)-1:0] seed_wr_beat_cnt;
 
     always_ff @(posedge clk or posedge rst) begin
-        if (rst || start_i)
+        if (rst) begin
             seed_wr_beat_cnt <= '0;
-        else if (seed_req_o && seed_ready_i)
-            seed_wr_beat_cnt <= seed_wr_beat_cnt + 1;
+        end else begin
+            if (start_i)
+                seed_wr_beat_cnt <= '0;
+            else if (seed_req_o && seed_ready_i)
+                seed_wr_beat_cnt <= seed_wr_beat_cnt + 1;
+        end
     end
 
     always_comb begin
