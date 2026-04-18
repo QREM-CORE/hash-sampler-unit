@@ -69,24 +69,24 @@ module hash_sampler_unit #(
     output logic                                t_ready_o,
 
     // --- Poly Memory Writer Output (sampler modes) ---
-    output logic                               hsu_req_o,
-    output logic [$clog2(NUM_POLYS)-1:0]       hsu_poly_id_o,
-    output logic [3:0]                         hsu_wr_en_o,
-    output logic [3:0][$clog2(NCOEFF)-1:0]     hsu_wr_idx_o,
-    output logic [3:0][COEFF_W-1:0]            hsu_wr_data_o,
-    input  wire                                hsu_stall_i,
-    output logic                               hsu_done_o,
+    output logic                                hsu_req_o,
+    output logic [$clog2(NUM_POLYS)-1:0]        hsu_poly_id_o,
+    output logic [3:0]                          hsu_wr_en_o,
+    output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_wr_idx_o,
+    output logic [3:0][COEFF_W-1:0]             hsu_wr_data_o,
+    input  wire                                 hsu_stall_i,
+    output logic                                hsu_done_o,
 
     // --- Seed Memory Port (bypass modes) ---
-    output logic                               seed_req_o,
-    output logic                               seed_we_o,
-    output logic [$clog2(NUM_SEEDS)-1:0]       seed_id_o,
-    output logic [$clog2(SEED_BEATS)-1:0]      seed_idx_o,
-    output logic [SEED_W-1:0]                  seed_wdata_o,
-    input  wire                                seed_ready_i,
+    output logic                                seed_req_o,
+    output logic                                seed_we_o,
+    output logic [$clog2(NUM_SEEDS)-1:0]        seed_id_o,
+    output logic [$clog2(SEED_BEATS)-1:0]       seed_idx_o,
+    output logic [SEED_W-1:0]                   seed_wdata_o,
+    input  wire                                 seed_ready_i,
 
-    input  wire                                seed_rvalid_i,
-    input  wire  [SEED_W-1:0]                  seed_rdata_i
+    input  wire                                 seed_rvalid_i,
+    input  wire  [SEED_W-1:0]                   seed_rdata_i
 );
 
     // ==========================================================
