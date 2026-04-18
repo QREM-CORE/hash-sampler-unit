@@ -155,7 +155,7 @@ module hash_sampler_unit_tb();
             seed_ready_i <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
 
             @(posedge clk);
-            
+
             data_valid_pulse = 1'b0;
 
             if (cfg_mode == MODE_SAMPLE_NTT || cfg_mode == MODE_SAMPLE_CBD) begin
