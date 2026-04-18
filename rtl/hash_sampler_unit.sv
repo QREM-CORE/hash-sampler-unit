@@ -376,7 +376,7 @@ module hash_sampler_unit #(
                     seed_req_o           = keccak_t_valid_o;
                     seed_we_o            = 1'b1;
                     seed_wdata_o         = keccak_t_data_o;
-                    
+
                     keccak_t_ready_i     = seed_ready_i;
                 end
             end
