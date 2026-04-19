@@ -55,11 +55,27 @@ module hash_sampler_unit_tb();
     logic [7:0]           t_keep_i;
     logic                 t_ready_o;
 
-    logic [63:0]          t_data_o;
-    logic                 t_valid_o;
-    logic                 t_last_o;
-    logic [7:0]           t_keep_o;
-    logic                 t_ready_i;
+    logic [3:0]           poly_id_i = '0;
+    logic                 hsu_req_o;
+    logic [3:0]           hsu_poly_id_o;
+    logic [3:0]           hsu_wr_en_o;
+    logic [3:0][7:0]      hsu_wr_idx_o;
+    logic [3:0][11:0]     hsu_wr_data_o;
+    logic                 hsu_stall_i = 1'b0;
+    logic                 hsu_done_o;
+
+    // Seed Memory Port
+    logic [2:0]           seed_id_i = '0;
+    logic                 input_sel_i = 1'b0;
+    logic                 seed_req_o;
+    logic                 seed_we_o;
+    logic [2:0]           seed_id_o;
+    logic [1:0]           seed_idx_o;
+    logic [63:0]          seed_wdata_o;
+    logic                 seed_ready_i = 1'b0;
+
+    logic                 seed_rvalid_i = 1'b0;
+    logic [63:0]          seed_rdata_i = '0;
 
     // =========================================================
     // 3. DUT Instantiation
@@ -121,21 +137,42 @@ module hash_sampler_unit_tb();
     // =========================================================
     task automatic monitor_axi_stream();
         int beat_idx = 0;
+        logic [63:0] received_data;
+        logic        data_valid_pulse;
 
         while (beat_idx < cfg_out_chunks) begin
-            // 20% chance to drop ready low to test FIFO backpressure
-            t_ready_i <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
+            // chance to drop ready low to test FIFO backpressure
+            hsu_stall_i  <= ($urandom_range(0, 99) < 20) ? 1'b1 : 1'b0;
+            seed_ready_i <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
+
             @(posedge clk);
 
-            if (t_valid_o && t_ready_i) begin
-                if (t_data_o !== expected_mem[beat_idx]) begin
-                    $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X", beat_idx, expected_mem[beat_idx], t_data_o);
+            data_valid_pulse = 1'b0;
+
+            if (cfg_mode == MODE_SAMPLE_NTT || cfg_mode == MODE_SAMPLE_CBD) begin
+                if (hsu_req_o && !hsu_stall_i) begin
+                    // Re-pack into 48-bit equivalent to match legacy test vectors
+                    received_data = {16'b0, hsu_wr_data_o[3], hsu_wr_data_o[2], hsu_wr_data_o[1], hsu_wr_data_o[0]};
+                    data_valid_pulse = 1'b1;
+                end
+            end else begin
+                // Check hashing output via Seed Memory interface
+                if (seed_req_o && seed_ready_i) begin
+                    received_data = seed_wdata_o;
+                    data_valid_pulse = 1'b1;
+                end
+            end
+
+            if (data_valid_pulse) begin
+                if (received_data !== expected_mem[beat_idx]) begin
+                    $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X", beat_idx, expected_mem[beat_idx], received_data);
                     errors++;
                 end
                 beat_idx++;
             end
         end
-        t_ready_i <= 1'b0;
+        hsu_stall_i  <= 1'b0;
+        seed_ready_i <= 1'b0;
     endtask
 
     // =========================================================
@@ -143,7 +180,7 @@ module hash_sampler_unit_tb();
     // =========================================================
     initial begin
         errors = 0;
-        start_i = 0; t_valid_i = 0; t_ready_i = 0;
+        start_i = 0; t_valid_i = 0;
 
         // Grab the test directory from Makefile argument
         if (!$value$plusargs("TEST_DIR=%s", test_dir)) begin
