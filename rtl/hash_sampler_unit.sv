@@ -5,36 +5,39 @@
  * Description:
  * - Unified Hashing and Sampling Unit (HSU) for ML-KEM (Kyber) Hardware Accelerators.
  * - Encapsulates a high-performance Keccak Core and various ML-KEM Samplers.
- * - Routes the 64-bit AXI4-Stream output of the Keccak Core either directly to the
- *   Seed Memory (Bypass/Absorb Modes) or through specialized Rejection (NTT) and CBD samplers.
- * - Features a dynamic demux/mux routing architecture controlled by the 'hsu_mode_i' enum.
+ * - Routes the 64-bit AXI4-Stream output of Keccak Core either directly to Seed Memory
+ *   (Bypass/Absorb Modes) or through specialized Rejection (NTT) and CBD samplers.
  *
- * Performance & Latency:
- * - Direct Hashing: Latency depends solely on Keccak Core (24 cycles per 1600-bit permutation).
- * - NTT Sampling: Produces exactly 256 coefficients; latency varies due to rejection logic.
- * - CBD Sampling: Produces exactly 256 coefficients; deterministic latency based on η (eta).
- * - Poly Absorb: SHA3-256 hash of 1–4 polynomials read from Poly Memory.
+ * Multi-Phase Absorption Protocol (MODE_ABSORB_POLY + Seed):
+ * --------------------------------------------------------------------------
+ * A single SHA3-256 hash can absorb an arbitrary sequence of data segments
+ * sourced from either Poly Memory (coefficients) or Seed Memory. The top-level
+ * controller orchestrates this via:
  *
- * Usage Contract:
- * - 'hsu_mode_i' and 'is_eta3_i' must be stable when 'start_i' is pulsed for exactly one cycle.
- * - 'xof_len_i' defines the total output length in bytes for Keccak XOF modes (0 = infinite).
- * - 'input_sel_i': 0 = Seed Memory feed, 1 = Poly Memory Reader feed (MODE_ABSORB_POLY).
+ *   start_i       : Pulse once to start a new hash operation (resets Keccak state).
+ *   absorb_poly_i : Pulse once per polynomial to absorb. Triggers the packer.
+ *                   Must not be pulsed again until packer_done_o is high.
+ *   absorb_last_i : Must be high on the LAST segment (poly or seed) before squeeze.
+ *                   Gates t_last into Keccak. Low for all intermediate segments.
+ *   input_sel_i   : 0 = Seed Memory feed, 1 = Poly Memory Reader (via packer).
+ *
+ * Example: H(t_hat[0] || t_hat[1] || rho)
+ *   1. start_i=1, hsu_mode_i=MODE_ABSORB_POLY
+ *   2. input_sel_i=1, poly_id_i=0, absorb_poly_i=1, absorb_last_i=0 → wait packer_done_o
+ *   3. input_sel_i=1, poly_id_i=1, absorb_poly_i=1, absorb_last_i=0 → wait packer_done_o
+ *   4. input_sel_i=0, absorb_last_i=1 → drive rho via seed_rdata_i → Keccak squeezes
  *
  * Mode Summary (hsu_mode_i):
  * -----------------------------------------------------------------------------------------
- * | Enum Name          | Keccak Mode | Input Source | Sampler Layer | Target             |
- * |--------------------|-------------|--------------|---------------|--------------------|
- * | MODE_SAMPLE_NTT    | SHAKE128    | Seed Mem     | Rejection     | Mat A              |
- * | MODE_SAMPLE_CBD    | SHAKE256    | Seed Mem     | CBD           | s, e               |
- * | MODE_HASH_SHA3_256 | SHA3-256    | Seed Mem     | Bypass        | H(p,m,c)           |
- * | MODE_HASH_SHA3_512 | SHA3-512    | Seed Mem     | Bypass        | G(d,m,h)           |
- * | MODE_HASH_SHAKE256 | SHAKE256    | Seed Mem     | Bypass        | J(z, c)            |
- * | MODE_ABSORB_POLY   | SHA3-256    | Poly Mem Rd  | Bypass        | H(poly[base..+N])  |
+ * | Enum Name          | Keccak Mode | Input Source       | Sampler Layer | Target        |
+ * |--------------------|-------------|--------------------|---------------|---------------|
+ * | MODE_SAMPLE_NTT    | SHAKE128    | Seed Mem           | Rejection     | Mat A         |
+ * | MODE_SAMPLE_CBD    | SHAKE256    | Seed Mem           | CBD           | s, e          |
+ * | MODE_HASH_SHA3_256 | SHA3-256    | Seed Mem           | Bypass        | H(p,m,c)      |
+ * | MODE_HASH_SHA3_512 | SHA3-512    | Seed Mem           | Bypass        | G(d,m,h)      |
+ * | MODE_HASH_SHAKE256 | SHAKE256    | Seed Mem           | Bypass        | J(z, c)       |
+ * | MODE_ABSORB_POLY   | SHA3-256    | Poly Mem Rd / Seed | Bypass        | H(poly||seed) |
  * -----------------------------------------------------------------------------------------
- *
- * Interface Notes:
- * - 48-bit sampler outputs are zero-padded to 64-bit 't_data_o' {16'b0, data[47:0]}.
- * - 't_keep_o' reflects valid 6-byte chunks (6'h3F) for sampler outputs.
  */
 
 `default_nettype none
@@ -53,20 +56,27 @@ module hash_sampler_unit #(
     input  wire                                 clk,
     input  wire                                 rst,
 
-    // Control
-    input  wire                                 start_i,
+    // ── Control ──────────────────────────────────────────────────────────────
+    input  wire                                 start_i,        // Pulse to start new hash op
     input  wire hs_mode_t                       hsu_mode_i,
-    input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,  // Keccak XOF length (in bytes)
-    input  wire                                 is_eta3_i,  // 1 = ML-KEM-768/1024 (η=3), 0 = ML-KEM-512 (η=2)
+    input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,
+    input  wire                                 is_eta3_i,
 
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
     input  wire [$clog2(NUM_SEEDS)-1:0]         seed_id_i,
+
+    // Selects Keccak input source: 0 = Seed Memory, 1 = Poly Memory Reader
     input  wire                                 input_sel_i,
 
-    // Number of polynomials to absorb in MODE_ABSORB_POLY (1–4)
-    input  wire  [2:0]                          poly_absorb_cnt_i,
+    // Pulse once per poly to absorb (MODE_ABSORB_POLY). Decoupled from start_i.
+    // Must be idle (packer_done_o or no active packer op) before pulsing again.
+    input  wire                                 absorb_poly_i,
 
-    // --- Poly Memory Writer Output (sampler modes) ---
+    // High on the last absorption segment before squeeze (poly or seed).
+    // Gates t_last into Keccak. Must be stable from absorb trigger until packer_done_o/seed_last.
+    input  wire                                 absorb_last_i,
+
+    // ── Poly Memory Writer Output (sampler modes: NTT, CBD) ──────────────────
     output logic                                hsu_req_o,
     output logic [$clog2(NUM_POLYS)-1:0]        hsu_poly_id_o,
     output logic [3:0]                          hsu_wr_en_o,
@@ -75,14 +85,14 @@ module hash_sampler_unit #(
     input  wire                                 hsu_stall_i,
     output logic                                hsu_done_o,
 
-    // --- Poly Memory Reader Input (MODE_ABSORB_POLY) ---
+    // ── Poly Memory Reader Input (MODE_ABSORB_POLY) ───────────────────────────
     output logic                                hsu_rd_req_o,
     output logic [$clog2(NUM_POLYS)-1:0]        hsu_rd_poly_id_o,
     output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_rd_idx_o,
     input  wire  [3:0][COEFF_W-1:0]             hsu_rd_data_i,
     input  wire                                 hsu_rd_valid_i,
 
-    // --- Seed Memory Port (bypass + absorb modes) ---
+    // ── Seed Memory Port ──────────────────────────────────────────────────────
     output logic                                seed_req_o,
     output logic                                seed_we_o,
     output logic [$clog2(NUM_SEEDS)-1:0]        seed_id_o,
@@ -91,14 +101,19 @@ module hash_sampler_unit #(
     input  wire                                 seed_ready_i,
 
     input  wire                                 seed_rvalid_i,
-    input  wire  [SEED_W-1:0]                   seed_rdata_i
+    input  wire  [SEED_W-1:0]                   seed_rdata_i,
+
+    // ── Status ────────────────────────────────────────────────────────────────
+    // Packer has finished draining gearbox buffer for the current poly.
+    // Controller safe to pulse absorb_poly_i again or switch input_sel_i.
+    output logic                                packer_done_o
 );
 
     // ==========================================================
     // Interconnection Signals
     // ==========================================================
 
-    // Keccak Core Logic
+    // Keccak Core
     logic                                       keccak_start;
     keccak_mode                                 keccak_mode_sel;
     logic                                       keccak_stop;
@@ -116,38 +131,34 @@ module hash_sampler_unit #(
     logic [7:0]                                 keccak_t_keep_o;
     logic                                       keccak_t_ready_i;
 
-    // Sample NTT Logic
+    // Sample NTT
     logic                                       sample_ntt_start;
-
     logic [63:0]                                sample_ntt_t_data_i;
     logic                                       sample_ntt_t_valid_i;
     logic                                       sample_ntt_t_last_i;
     logic [7:0]                                 sample_ntt_t_keep_i;
     logic                                       sample_ntt_t_ready_o;
-
     logic [3:0]                                 sample_ntt_wr_en;
     logic [3:0][$clog2(NCOEFF)-1:0]             sample_ntt_wr_idx;
     logic [3:0][COEFF_W-1:0]                    sample_ntt_wr_data;
     logic                                       sample_ntt_wr_valid;
     logic                                       sample_ntt_done;
 
-    // Sample CBD Logic
+    // Sample CBD
     logic                                       sample_cbd_start;
     logic                                       sample_cbd_is_eta3;
-
     logic [63:0]                                sample_cbd_t_data_i;
     logic                                       sample_cbd_t_valid_i;
     logic                                       sample_cbd_t_last_i;
     logic [7:0]                                 sample_cbd_t_keep_i;
     logic                                       sample_cbd_t_ready_o;
-
     logic [3:0]                                 sample_cbd_wr_en;
     logic [3:0][$clog2(NCOEFF)-1:0]             sample_cbd_wr_idx;
     logic [3:0][COEFF_W-1:0]                    sample_cbd_wr_data;
     logic                                       sample_cbd_wr_valid;
     logic                                       sample_cbd_done;
 
-    // Packer Logic (MODE_ABSORB_POLY)
+    // Packer (MODE_ABSORB_POLY)
     logic [63:0]                                packer_t_data;
     logic                                       packer_t_valid;
     logic                                       packer_t_last;
@@ -156,8 +167,6 @@ module hash_sampler_unit #(
     logic                                       packer_rd_req;
     logic [$clog2(NUM_POLYS)-1:0]               packer_rd_poly_id;
     logic [3:0][$clog2(NCOEFF)-1:0]             packer_rd_idx;
-    logic                                       packer_done;
-
 
     // ==========================================================
     // Module Instantiations
@@ -167,18 +176,15 @@ module hash_sampler_unit #(
     keccak_core keccak_core_inst (
         .clk              (clk),
         .rst              (rst),
-
         .start_i          (keccak_start),
         .keccak_mode_i    (keccak_mode_sel),
         .xof_len_i        (keccak_xof_len),
         .stop_i           (keccak_stop),
-
         .s_axis_tdata     (keccak_t_data_i),
         .s_axis_tvalid    (keccak_t_valid_i),
         .s_axis_tlast     (keccak_t_last_i),
         .s_axis_tkeep     (keccak_t_keep_i),
         .s_axis_tready    (keccak_t_ready_o),
-
         .m_axis_tdata     (keccak_t_data_o),
         .m_axis_tvalid    (keccak_t_valid_o),
         .m_axis_tlast     (keccak_t_last_o),
@@ -186,7 +192,7 @@ module hash_sampler_unit #(
         .m_axis_tready    (keccak_t_ready_i)
     );
 
-    // Seed input beat counter
+    // Seed input beat counter (used for t_last in seed path)
     logic [$clog2(SEED_BEATS)-1:0] seed_rd_beat_cnt;
     logic                          seed_beat_last;
 
@@ -203,31 +209,32 @@ module hash_sampler_unit #(
         end
     end
 
-    // Keccak Sink Input MUX (2 sources: Seed Memory | Poly Packer)
-    assign keccak_start     = start_i;
-    assign keccak_stop      = 1'b0;
-    assign keccak_xof_len   = xof_len_i;
+    // Keccak start + mode
+    assign keccak_start   = start_i;
+    assign keccak_stop    = 1'b0;
+    assign keccak_xof_len = xof_len_i;
 
+    // Keccak Sink Input MUX: Seed Memory vs Poly Packer
     always_comb begin
         if (input_sel_i) begin
             // Poly Memory Reader path (via packer)
             keccak_t_data_i  = packer_t_data;
             keccak_t_valid_i = packer_t_valid;
-            keccak_t_last_i  = packer_t_last;
+            keccak_t_last_i  = packer_t_last;  // Packer gates t_last with is_last_i internally
             keccak_t_keep_i  = packer_t_keep;
         end else begin
-            // Seed Memory path
+            // Seed Memory path — t_last gated by absorb_last_i from controller
             keccak_t_data_i  = seed_rdata_i;
             keccak_t_valid_i = seed_rvalid_i;
-            keccak_t_last_i  = seed_beat_last;
+            keccak_t_last_i  = seed_beat_last && absorb_last_i;
             keccak_t_keep_i  = 8'hFF;
         end
     end
 
-    // Packer ready: only connected when in poly absorb mode
+    // Packer t_ready: only connected in poly absorb mode
     assign packer_t_ready = (hsu_mode_i == MODE_ABSORB_POLY) ? keccak_t_ready_o : 1'b0;
 
-    // --- Sample NTT Module ---
+    // --- Sample NTT ---
     sample_ntt #(
         .COEFF_W(COEFF_W),
         .NCOEFF(NCOEFF)
@@ -235,13 +242,11 @@ module hash_sampler_unit #(
         .clk        (clk),
         .rst        (rst),
         .start      (sample_ntt_start),
-
         .t_data_i   (sample_ntt_t_data_i),
         .t_valid_i  (sample_ntt_t_valid_i),
         .t_last_i   (sample_ntt_t_last_i),
         .t_keep_i   (sample_ntt_t_keep_i),
         .t_ready_o  (sample_ntt_t_ready_o),
-
         .wr_en_o    (sample_ntt_wr_en),
         .wr_idx_o   (sample_ntt_wr_idx),
         .wr_data_o  (sample_ntt_wr_data),
@@ -250,13 +255,12 @@ module hash_sampler_unit #(
         .stall_i    (hsu_stall_i)
     );
 
-    // NTT Sink Data (valid gated below)
     assign sample_ntt_start    = start_i;
     assign sample_ntt_t_data_i = keccak_t_data_o;
     assign sample_ntt_t_last_i = keccak_t_last_o;
     assign sample_ntt_t_keep_i = keccak_t_keep_o;
 
-    // --- Sample CBD Module ---
+    // --- Sample CBD ---
     sample_poly_cbd #(
         .COEFF_W(COEFF_W),
         .NCOEFF(NCOEFF)
@@ -265,13 +269,11 @@ module hash_sampler_unit #(
         .rst        (rst),
         .start      (sample_cbd_start),
         .is_eta3    (sample_cbd_is_eta3),
-
         .t_data_i   (sample_cbd_t_data_i),
         .t_valid_i  (sample_cbd_t_valid_i),
         .t_last_i   (sample_cbd_t_last_i),
         .t_keep_i   (sample_cbd_t_keep_i),
         .t_ready_o  (sample_cbd_t_ready_o),
-
         .wr_en_o    (sample_cbd_wr_en),
         .wr_idx_o   (sample_cbd_wr_idx),
         .wr_data_o  (sample_cbd_wr_data),
@@ -280,7 +282,6 @@ module hash_sampler_unit #(
         .stall_i    (hsu_stall_i)
     );
 
-    // CBD Sink Data (valid gated below)
     assign sample_cbd_start    = start_i;
     assign sample_cbd_is_eta3  = is_eta3_i;
     assign sample_cbd_t_data_i = keccak_t_data_o;
@@ -288,31 +289,29 @@ module hash_sampler_unit #(
     assign sample_cbd_t_keep_i = keccak_t_keep_o;
 
     // --- Coeff-to-AXI Packer (MODE_ABSORB_POLY) ---
+    // Triggered by absorb_poly_i, NOT start_i — allows multiple poly absorptions
+    // within a single Keccak hash operation without resetting state.
     coeff_to_axis_packer #(
         .COEFF_W  (COEFF_W),
         .NCOEFF   (NCOEFF),
         .NUM_POLYS(NUM_POLYS)
     ) packer_inst (
-        .clk           (clk),
-        .rst           (rst),
-        .start         (start_i),
-
-        .base_poly_id_i(poly_id_i),
-        .num_polys_i   (poly_absorb_cnt_i),
-
-        .rd_req_o      (packer_rd_req),
-        .rd_poly_id_o  (packer_rd_poly_id),
-        .rd_idx_o      (packer_rd_idx),
-        .rd_data_i     (hsu_rd_data_i),
-        .rd_valid_i    (hsu_rd_valid_i),
-
-        .t_data_o      (packer_t_data),
-        .t_valid_o     (packer_t_valid),
-        .t_last_o      (packer_t_last),
-        .t_keep_o      (packer_t_keep),
-        .t_ready_i     (packer_t_ready),
-
-        .done_o        (packer_done)
+        .clk          (clk),
+        .rst          (rst),
+        .absorb_poly  (absorb_poly_i),
+        .poly_id_i    (poly_id_i),
+        .is_last_i    (absorb_last_i),
+        .rd_req_o     (packer_rd_req),
+        .rd_poly_id_o (packer_rd_poly_id),
+        .rd_idx_o     (packer_rd_idx),
+        .rd_data_i    (hsu_rd_data_i),
+        .rd_valid_i   (hsu_rd_valid_i),
+        .t_data_o     (packer_t_data),
+        .t_valid_o    (packer_t_valid),
+        .t_last_o     (packer_t_last),
+        .t_keep_o     (packer_t_keep),
+        .t_ready_i    (packer_t_ready),
+        .done_o       (packer_done_o)
     );
 
 
@@ -335,16 +334,14 @@ module hash_sampler_unit #(
 
     always_comb begin
         // ------------------------------------------------------
-        // Default Assignments (Prevents Latches)
+        // Default Assignments
         // ------------------------------------------------------
         keccak_mode_sel      = SHA3_256;
 
-        // Downstream Valid Gates (Demux)
         sample_ntt_t_valid_i = 1'b0;
         sample_cbd_t_valid_i = 1'b0;
         keccak_t_ready_i     = 1'b0;
 
-        // Top Level Outputs
         hsu_req_o            = 1'b0;
         hsu_poly_id_o        = poly_id_i;
         hsu_wr_en_o          = 4'b0;
@@ -358,24 +355,19 @@ module hash_sampler_unit #(
         seed_idx_o           = seed_wr_beat_cnt;
         seed_wdata_o         = '0;
 
-        // Poly reader outputs default (driven by packer)
         hsu_rd_req_o         = 1'b0;
         hsu_rd_poly_id_o     = '0;
         hsu_rd_idx_o         = '0;
 
         // ------------------------------------------------------
-        // Routing based on active hs_mode_t
+        // Routing
         // ------------------------------------------------------
         unique case (hsu_mode_i)
 
             MODE_SAMPLE_NTT: begin
                 keccak_mode_sel      = SHAKE128;
-
-                // Route Keccak -> NTT
                 sample_ntt_t_valid_i = keccak_t_valid_o;
                 keccak_t_ready_i     = sample_ntt_t_ready_o;
-
-                // Route NTT -> Mem
                 hsu_req_o            = sample_ntt_wr_valid;
                 hsu_wr_en_o          = sample_ntt_wr_en;
                 hsu_wr_idx_o         = sample_ntt_wr_idx;
@@ -385,12 +377,8 @@ module hash_sampler_unit #(
 
             MODE_SAMPLE_CBD: begin
                 keccak_mode_sel      = SHAKE256;
-
-                // Route Keccak -> CBD
                 sample_cbd_t_valid_i = keccak_t_valid_o;
                 keccak_t_ready_i     = sample_cbd_t_ready_o;
-
-                // Route CBD -> Mem
                 hsu_req_o            = sample_cbd_wr_valid;
                 hsu_wr_en_o          = sample_cbd_wr_en;
                 hsu_wr_idx_o         = sample_cbd_wr_idx;
@@ -399,32 +387,28 @@ module hash_sampler_unit #(
             end
 
             MODE_HASH_SHA3_256, MODE_HASH_SHA3_512, MODE_HASH_SHAKE256: begin
-                if (hsu_mode_i == MODE_HASH_SHA3_256) keccak_mode_sel = SHA3_256;
+                if      (hsu_mode_i == MODE_HASH_SHA3_256) keccak_mode_sel = SHA3_256;
                 else if (hsu_mode_i == MODE_HASH_SHA3_512) keccak_mode_sel = SHA3_512;
-                else keccak_mode_sel = SHAKE256;
-
-                // Route Keccak -> Seed Memory
-                seed_req_o           = keccak_t_valid_o;
-                seed_we_o            = 1'b1;
-                seed_wdata_o         = keccak_t_data_o;
-
-                keccak_t_ready_i     = seed_ready_i;
+                else                                        keccak_mode_sel = SHAKE256;
+                seed_req_o       = keccak_t_valid_o;
+                seed_we_o        = 1'b1;
+                seed_wdata_o     = keccak_t_data_o;
+                keccak_t_ready_i = seed_ready_i;
             end
 
             MODE_ABSORB_POLY: begin
-                keccak_mode_sel      = SHA3_256;
-
-                // Route Packer rd signals to poly memory
-                hsu_rd_req_o         = packer_rd_req;
-                hsu_rd_poly_id_o     = packer_rd_poly_id;
-                hsu_rd_idx_o         = packer_rd_idx;
-
-                // Route Keccak output -> Seed Memory (32B SHA3-256 digest)
-                seed_req_o           = keccak_t_valid_o;
-                seed_we_o            = 1'b1;
-                seed_wdata_o         = keccak_t_data_o;
-                keccak_t_ready_i     = seed_ready_i;
+                keccak_mode_sel  = SHA3_256;
+                // Poly reader driven by packer
+                hsu_rd_req_o     = packer_rd_req;
+                hsu_rd_poly_id_o = packer_rd_poly_id;
+                hsu_rd_idx_o     = packer_rd_idx;
+                // Keccak output → Seed Memory (32B SHA3-256 digest)
+                seed_req_o       = keccak_t_valid_o;
+                seed_we_o        = 1'b1;
+                seed_wdata_o     = keccak_t_data_o;
+                keccak_t_ready_i = seed_ready_i;
             end
+
         endcase
     end
 
