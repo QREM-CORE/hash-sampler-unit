@@ -44,7 +44,7 @@ module hash_sampler_unit_tb();
 
     logic [3:0]           poly_id_i      = '0;
     logic [2:0]           seed_id_i      = '0;
-    logic                 input_sel_i    = 1'b0;
+    logic [1:0]           input_sel_i    = 2'b00;
 
     logic                 absorb_poly_i  = 1'b0;
     logic                 absorb_last_i  = 1'b0;
@@ -75,6 +75,13 @@ module hash_sampler_unit_tb();
 
     logic                 seed_rvalid_i  = 1'b0;
     logic [63:0]          seed_rdata_i   = '0;
+
+    // AXI-Stream Sink Signals (Idle)
+    logic [63:0]          axis_t_data_i  = '0;
+    logic                 axis_t_valid_i = 1'b0;
+    logic                 axis_t_last_i  = 1'b0;
+    logic [7:0]           axis_t_keep_i  = '0;
+    logic                 axis_t_ready_o;
 
     // Packer ready status
     logic                 packer_done_o;

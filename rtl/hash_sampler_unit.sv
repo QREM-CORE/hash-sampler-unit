@@ -66,7 +66,7 @@ module hash_sampler_unit #(
     input  wire [$clog2(NUM_SEEDS)-1:0]         seed_id_i,
 
     // Selects Keccak input source: 0 = Seed Memory, 1 = Poly Memory Reader
-    input  wire                                 input_sel_i,
+    input  wire  [1:0]                          input_sel_i,
 
     // Pulse once per poly to absorb (MODE_ABSORB_POLY). Decoupled from start_i.
     // Must be idle (packer_done_o or no active packer op) before pulsing again.
@@ -102,6 +102,13 @@ module hash_sampler_unit #(
 
     input  wire                                 seed_rvalid_i,
     input  wire  [SEED_W-1:0]                   seed_rdata_i,
+
+    // ── Raw AXI-Stream Input (direct Keccak feed) ─────────────────────────────
+    input  wire  [SEED_W-1:0]                   axis_t_data_i,
+    input  wire                                 axis_t_valid_i,
+    input  wire                                 axis_t_last_i,
+    input  wire  [SEED_W/8-1:0]                 axis_t_keep_i,
+    output logic                                axis_t_ready_o,
 
     // ── Status ────────────────────────────────────────────────────────────────
     // Packer has finished draining gearbox buffer for the current poly.
@@ -204,7 +211,7 @@ module hash_sampler_unit #(
         end else begin
             if (start_i)
                 seed_rd_beat_cnt <= '0;
-            else if (input_sel_i == 1'b0 && seed_rvalid_i && keccak_t_ready_o)
+            else if (input_sel_i == 2'b00 && seed_rvalid_i && keccak_t_ready_o)
                 seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
         end
     end
@@ -216,19 +223,29 @@ module hash_sampler_unit #(
 
     // Keccak Sink Input MUX: Seed Memory vs Poly Packer
     always_comb begin
-        if (input_sel_i) begin
-            // Poly Memory Reader path (via packer)
-            keccak_t_data_i  = packer_t_data;
-            keccak_t_valid_i = packer_t_valid;
-            keccak_t_last_i  = packer_t_last;  // Packer gates t_last with is_last_i internally
-            keccak_t_keep_i  = packer_t_keep;
-        end else begin
-            // Seed Memory path — t_last gated by absorb_last_i from controller
-            keccak_t_data_i  = seed_rdata_i;
-            keccak_t_valid_i = seed_rvalid_i;
-            keccak_t_last_i  = seed_beat_last && absorb_last_i;
-            keccak_t_keep_i  = 8'hFF;
-        end
+        unique case (input_sel_i)
+            2'b01: begin
+                // Poly Memory Reader path (via packer)
+                keccak_t_data_i  = packer_t_data;
+                keccak_t_valid_i = packer_t_valid;
+                keccak_t_last_i  = packer_t_last;
+                keccak_t_keep_i  = packer_t_keep;
+            end
+            2'b10: begin
+                // Raw AXI-Stream path
+                keccak_t_data_i  = axis_t_data_i;
+                keccak_t_valid_i = axis_t_valid_i;
+                keccak_t_last_i  = axis_t_last_i;
+                keccak_t_keep_i  = axis_t_keep_i;
+            end
+            default: begin
+                // Seed Memory path
+                keccak_t_data_i  = seed_rdata_i;
+                keccak_t_valid_i = seed_rvalid_i;
+                keccak_t_last_i  = seed_beat_last && absorb_last_i;
+                keccak_t_keep_i  = 8'hFF;
+            end
+        endcase
     end
 
     // Packer t_ready: only connected in poly absorb mode
@@ -355,9 +372,9 @@ module hash_sampler_unit #(
         seed_idx_o           = seed_wr_beat_cnt;
         seed_wdata_o         = '0;
 
-        hsu_rd_req_o         = 1'b0;
-        hsu_rd_poly_id_o     = '0;
         hsu_rd_idx_o         = '0;
+
+        axis_t_ready_o       = (input_sel_i == 2'b10) ? keccak_t_ready_o : 1'b0;
 
         // ------------------------------------------------------
         // Routing
