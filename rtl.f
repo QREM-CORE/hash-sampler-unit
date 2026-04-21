@@ -5,5 +5,8 @@
 # --- Packages ---
 rtl/hash_sample_pkg.sv
 
+# --- Packer ---
+rtl/coeff_to_axis_packer.sv
+
 # --- HASH SAMPLER UNIT TOP LEVEL ---
 rtl/hash_sampler_unit.sv
