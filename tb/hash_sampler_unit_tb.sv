@@ -23,6 +23,7 @@
 `timescale 1ns / 1ps
 
 import hash_sample_pkg::*;
+import qrem_global_pkg::*;
 
 module hash_sampler_unit_tb();
 
@@ -42,8 +43,8 @@ module hash_sampler_unit_tb();
     logic [XOF_LEN_WIDTH-1:0] xof_len_i = '0;
     logic                 is_eta3_i      = 1'b0;
 
-    logic [3:0]           poly_id_i      = '0;
-    logic [2:0]           seed_id_i      = '0;
+    logic [POLY_ID_WIDTH-1:0] poly_id_i      = '0;
+    seed_id_e             seed_id_i      = SEED_ID_D;
     logic [1:0]           input_sel_i    = 2'b00;
 
     logic                 absorb_poly_i  = 1'b0;
@@ -51,36 +52,36 @@ module hash_sampler_unit_tb();
 
     // Sampler write output
     logic                 hsu_req_o;
-    logic [3:0]           hsu_poly_id_o;
+    logic [POLY_ID_WIDTH-1:0] hsu_poly_id_o;
     logic [3:0]           hsu_wr_en_o;
-    logic [3:0][7:0]      hsu_wr_idx_o;
-    logic [3:0][11:0]     hsu_wr_data_o;
+    logic [3:0][$clog2(NCOEFF)-1:0] hsu_wr_idx_o;
+    logic [3:0][COEFF_WIDTH-1:0] hsu_wr_data_o;
     logic                 hsu_stall_i    = 1'b0;
     logic                 hsu_done_o;
 
     // Poly Memory Reader (MODE_ABSORB_POLY)
     logic                 hsu_rd_req_o;
-    logic [3:0]           hsu_rd_poly_id_o;
-    logic [3:0][7:0]      hsu_rd_idx_o;
-    logic [3:0][11:0]     hsu_rd_data_i  = '0;
+    logic [POLY_ID_WIDTH-1:0] hsu_rd_poly_id_o;
+    logic [3:0][$clog2(NCOEFF)-1:0] hsu_rd_idx_o;
+    logic [3:0][COEFF_WIDTH-1:0] hsu_rd_data_i  = '0;
     logic                 hsu_rd_valid_i = 1'b0;
 
     // Seed Memory Port
     logic                 seed_req_o;
     logic                 seed_we_o;
-    logic [2:0]           seed_id_o;
-    logic [1:0]           seed_idx_o;
-    logic [63:0]          seed_wdata_o;
+    seed_id_e             seed_id_o;
+    logic [$clog2(SEED_BEATS)-1:0] seed_idx_o;
+    logic [SEED_W-1:0]    seed_wdata_o;
     logic                 seed_ready_i   = 1'b0;
 
     logic                 seed_rvalid_i  = 1'b0;
-    logic [63:0]          seed_rdata_i   = '0;
+    logic [SEED_W-1:0]    seed_rdata_i   = '0;
 
     // AXI-Stream Sink Signals (Idle)
-    logic [63:0]          axis_t_data_i  = '0;
+    logic [SEED_W-1:0]    axis_t_data_i  = '0;
     logic                 axis_t_valid_i = 1'b0;
     logic                 axis_t_last_i  = 1'b0;
-    logic [7:0]           axis_t_keep_i  = '0;
+    logic [SEED_W/8-1:0]  axis_t_keep_i  = '0;
     logic                 axis_t_ready_o;
 
     // Packer ready status
@@ -109,9 +110,9 @@ module hash_sampler_unit_tb();
     int          cfg_out_chunks;
     int          cfg_poly_cnt;
 
-    logic [63:0] input_mem    [128];
-    logic [11:0] poly_mem     [4][64];  // Up to 4 polys, 64×4-coeff beats each
-    logic [63:0] expected_mem [128];
+    logic [SEED_W-1:0] input_mem    [128];
+    logic [COEFF_WIDTH-1:0] poly_mem     [NUM_POLYS][64];  // Up to NUM_POLYS, 64×4-coeff beats each
+    logic [SEED_W-1:0] expected_mem [128];
     int          errors;
 
     // =========================================================
@@ -159,7 +160,8 @@ module hash_sampler_unit_tb();
 
             if (cfg_mode == int'(MODE_SAMPLE_NTT) || cfg_mode == int'(MODE_SAMPLE_CBD)) begin
                 if (hsu_req_o && !hsu_stall_i) begin
-                    received_data    = {16'b0, hsu_wr_data_o[3], hsu_wr_data_o[2],
+                    received_data    = { (SEED_W - 4*COEFF_WIDTH)'(0),
+                                               hsu_wr_data_o[3], hsu_wr_data_o[2],
                                                hsu_wr_data_o[1], hsu_wr_data_o[0]};
                     data_valid_pulse = 1'b1;
                 end
@@ -252,7 +254,7 @@ module hash_sampler_unit_tb();
             // input.hex: each line = one 64-bit packed beat holding 4×12-bit coefficients
             // Line layout: {16'b0, c3[11:0], c2[11:0], c1[11:0], c0[11:0]}
             begin
-                automatic logic [63:0] raw_mem [256];
+                automatic logic [SEED_W-1:0] raw_mem [NUM_POLYS*64];
                 $readmemh(input_file, raw_mem);
                 for (int p = 0; p < cfg_poly_cnt; p++) begin
                     for (int b = 0; b < 64; b++) begin
