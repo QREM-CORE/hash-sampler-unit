@@ -32,12 +32,13 @@
 
 `default_nettype none
 `timescale 1ns / 1ps
+import qrem_global_pkg::*;
 
 module coeff_to_axis_packer #(
-    parameter int COEFF_W   = 12,
-    parameter int NCOEFF    = 256,
-    parameter int NUM_POLYS = 16,
-    parameter int DWIDTH    = 64
+    parameter int COEFF_W   = COEFF_WIDTH,
+    parameter int NCOEFF    = qrem_global_pkg::NCOEFF,
+    parameter int NUM_POLYS = qrem_global_pkg::NUM_POLYS,
+    parameter int DWIDTH    = qrem_global_pkg::DWIDTH
 ) (
     input  wire                              clk,
     input  wire                              rst,

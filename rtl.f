@@ -1,4 +1,5 @@
 # --- MAJOR SUBMODULES ---
+-f lib/common-rtl/rtl.f
 -f lib/keccak-fips202-sv/rtl.f
 -f lib/poly-samplers/rtl.f
 

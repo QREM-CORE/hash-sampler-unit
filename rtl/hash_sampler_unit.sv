@@ -44,14 +44,15 @@
 `timescale 1ns / 1ps
 
 import hash_sample_pkg::*;
+import qrem_global_pkg::*;
 
 module hash_sampler_unit #(
-    parameter int COEFF_W     = 12,
-    parameter int NCOEFF      = 256,
-    parameter int NUM_POLYS   = 16,
-    parameter int NUM_SEEDS   = 8,
-    parameter int SEED_W      = 64,
-    parameter int SEED_BEATS  = 4
+    parameter int COEFF_W     = COEFF_WIDTH,
+    parameter int NCOEFF      = qrem_global_pkg::NCOEFF,
+    parameter int NUM_POLYS   = qrem_global_pkg::NUM_POLYS,
+    parameter int NUM_SEEDS   = 11, // Based on seed_id_e
+    parameter int SEED_W      = qrem_global_pkg::SEED_W,
+    parameter int SEED_BEATS  = qrem_global_pkg::SEED_BEATS
 ) (
     input  wire                                 clk,
     input  wire                                 rst,
@@ -63,7 +64,7 @@ module hash_sampler_unit #(
     input  wire                                 is_eta3_i,
 
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
-    input  wire [$clog2(NUM_SEEDS)-1:0]         seed_id_i,
+    input  wire seed_id_e                       seed_id_i,
 
     // Selects Keccak input source: 0 = Seed Memory, 1 = Poly Memory Reader
     input  wire  [1:0]                          input_sel_i,
@@ -95,7 +96,7 @@ module hash_sampler_unit #(
     // ── Seed Memory Port ──────────────────────────────────────────────────────
     output logic                                seed_req_o,
     output logic                                seed_we_o,
-    output logic [$clog2(NUM_SEEDS)-1:0]        seed_id_o,
+    output seed_id_e                            seed_id_o,
     output logic [$clog2(SEED_BEATS)-1:0]       seed_idx_o,
     output logic [SEED_W-1:0]                   seed_wdata_o,
     input  wire                                 seed_ready_i,
