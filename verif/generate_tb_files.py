@@ -4,20 +4,19 @@
 # Author      : Kiet Le
 # Project     : FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
 # Description :
-#   This script bridges the gap between the Python ML-KEM reference model and
-#   the SystemVerilog Hash Sampler Unit (HSU) testbench. It parses a JSON file
-#   containing cryptographic test vectors and automatically generates a structured
-#   directory tree for automated RTL simulation.
+#   Parses test_vectors.json and generates structured directory trees for
+#   automated RTL simulation of the Hash Sampler Unit (HSU).
 #
 # Key Operations:
-#   1. Directory Generation : Creates OS-safe, uniquely named folders for each test.
-#   2. Config Extraction    : Translates SystemVerilog string Enums into integer
-#                             flags (config.txt) for easy $fscanf parsing.
+#   1. Directory Generation : Creates OS-safe, uniquely named folders per test.
+#   2. Config Extraction    : Translates SV enum strings into integer flags
+#                             (config.txt) for $fscanf parsing.
 #   3. Expected Output      : Writes 64-bit packed hex strings to expected.hex.
-#   4. AXI Byte-Alignment   : Reads the input seed hex, chunks it into 64-bit
-#                             words, and performs a Little-Endian byte reversal
-#                             to perfectly align with the hardware's AXI4-Stream
-#                             t_data[7:0] LSB orientation (input.hex).
+#   4. Input Generation     :
+#      - Seed/hash modes    : Chunks input seed into 64-bit LE words (input.hex).
+#      - MODE_ABSORB_POLY   : Writes 64-bit packed coefficient beats where each
+#                             line holds 4 raw 12-bit coefficients:
+#                             {coeff[3][11:0], coeff[2][11:0], coeff[1][11:0], coeff[0][11:0]}
 #
 # Input  : test_vectors.json
 # Output : test_vectors/<test_name_id>/ {config.txt, input.hex, expected.hex}
@@ -28,75 +27,84 @@ import json
 import os
 import re
 
-# Map your SystemVerilog Enum names to integers so $fscanf can read them easily
 MODE_MAP = {
-    "MODE_SAMPLE_NTT": 0,
-    "MODE_SAMPLE_CBD": 1,
+    "MODE_SAMPLE_NTT":    0,
+    "MODE_SAMPLE_CBD":    1,
     "MODE_HASH_SHA3_256": 2,
     "MODE_HASH_SHA3_512": 3,
-    "MODE_HASH_SHAKE256": 4
+    "MODE_HASH_SHAKE256": 4,
+    "MODE_ABSORB_POLY":   5,
 }
 
 def generate_files(json_file):
     with open(json_file, 'r') as f:
         data = json.load(f)
 
-    # Create root directory
     root_dir = "test_vectors"
     os.makedirs(root_dir, exist_ok=True)
 
     for test in data['tests']:
-        # Create a highly descriptive, OS-safe folder name
-        # e.g., "Test B" + "CBD Sampler Vectors (eta=2)" -> "test_b_cbd_sampler_vectors_eta_2"
         raw_name = f"{test['test_id']}_{test['name']}"
         folder_name = re.sub(r'[^a-zA-Z0-9]+', '_', raw_name.lower()).strip('_')
-
         test_dir = os.path.join(root_dir, folder_name)
         os.makedirs(test_dir, exist_ok=True)
-
         print(f"Generating files in {test_dir}/...")
 
-        # 1. Extract Config
-        config = test.get('config', {})
+        config  = test.get('config', {})
         hsu_mode_str = config.get('hsu_mode_i', 'MODE_HASH_SHA3_256')
         hsu_mode_int = MODE_MAP.get(hsu_mode_str, 0)
-        is_eta3 = config.get('is_eta3_i', 0)
+        is_eta3      = config.get('is_eta3_i', 0)
+        poly_cnt     = config.get('poly_cnt', 1)
+        out_chunks   = len(test['output_beats'])
 
-        in_bytes = len(test['input_seed_hex']) // 2
-        out_chunks = len(test['output_beats'])
-
-        # Write config.txt
-        with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
-            f.write(f"MODE={hsu_mode_int}\n")
-            f.write(f"IS_ETA3={is_eta3}\n")
-            f.write(f"IN_BYTES={in_bytes}\n")
-            f.write(f"OUT_CHUNKS={out_chunks}\n")
-
-        # 2. Write expected.hex (Direct copy from JSON)
+        # ── Generate expected.hex ──────────────────────────────────────────
         with open(os.path.join(test_dir, 'expected.hex'), 'w') as f:
             for beat in test['output_beats']:
                 f.write(f"{beat}\n")
 
-        # 3. Write input.hex (Requires Little-Endian alignment for AXI bus)
-        input_hex = test['input_seed_hex']
+        # ── Generate config.txt & input.hex ───────────────────────────────
+        if hsu_mode_str == "MODE_ABSORB_POLY":
+            # Coefficient beats: each entry in 'input_coeffs' is a list of 4 ints
+            # Stored as 64-bit hex: {16'b0, c3[11:0], c2[11:0], c1[11:0], c0[11:0]}
+            coeff_beats = test.get('input_coeffs', [])
+            in_words    = len(coeff_beats)
 
-        # Split into a list of 2-character bytes
-        byte_list = [input_hex[i:i+2] for i in range(0, len(input_hex), 2)]
+            with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
+                f.write(f"MODE={hsu_mode_int}\n")
+                f.write(f"IS_ETA3=0\n")
+                f.write(f"IN_WORDS={in_words}\n")
+                f.write(f"OUT_CHUNKS={out_chunks}\n")
+                f.write(f"POLY_CNT={poly_cnt}\n")
 
-        with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
-            # Iterate through the bytes 8 at a time (64 bits)
-            for i in range(0, len(byte_list), 8):
-                chunk = byte_list[i:i+8]
+            with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
+                for beat in coeff_beats:
+                    # beat = [c0, c1, c2, c3]
+                    packed = 0
+                    for j, c in enumerate(beat):
+                        packed |= (int(c) & 0xFFF) << (12 * j)
+                    f.write(f"{packed:016X}\n")
 
-                # Zero-pad the last chunk if it's not a full 8 bytes
-                while len(chunk) < 8:
-                    chunk.append('00')
+        else:
+            # Seed/hash modes: AXI byte-aligned LE words
+            input_hex = test.get('input_seed_hex', '')
+            in_bytes  = len(input_hex) // 2
+            byte_list = [input_hex[i:i+2] for i in range(0, len(input_hex), 2)]
+            in_words  = (in_bytes + 7) // 8
 
-                # Reverse the byte array so Byte 0 is on the far right (LSB)
-                chunk.reverse()
+            with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
+                f.write(f"MODE={hsu_mode_int}\n")
+                f.write(f"IS_ETA3={is_eta3}\n")
+                f.write(f"IN_WORDS={in_words}\n")
+                f.write(f"OUT_CHUNKS={out_chunks}\n")
+                f.write(f"POLY_CNT=1\n")
 
-                # Join back into a 16-character hex string and write
-                f.write("".join(chunk) + "\n")
+            with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
+                for i in range(0, len(byte_list), 8):
+                    chunk = byte_list[i:i+8]
+                    while len(chunk) < 8:
+                        chunk.append('00')
+                    chunk.reverse()
+                    f.write("".join(chunk) + "\n")
 
     print("\nPre-processing complete! All folders and .hex files generated.")
 

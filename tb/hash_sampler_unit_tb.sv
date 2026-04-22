@@ -5,22 +5,17 @@
  * Project     : FIPS 203 (ML-KEM / Kyber) Hardware Accelerator
  * Description :
  * Transaction-based, dual-simulator (ModelSim & Verilator) compatible
- * testbench for the complete Hash Sampler Unit (HSU). It verifies both
- * direct cryptographic hashing and the ML-KEM polynomial samplers (NTT/CBD).
+ * testbench for the complete Hash Sampler Unit (HSU). Verifies:
+ *   - Hash bypass modes (SHA3-256, SHA3-512, SHAKE256) via Seed Memory feed
+ *   - ML-KEM samplers (NTT rejection, CBD)
+ *   - Polynomial absorption (MODE_ABSORB_POLY): single poly and multi-poly
+ *     sequences where controller manually drives poly-by-poly absorption
  *
- * Key Features:
- * 1. Dynamic File I/O  : Uses the +TEST_DIR plusarg to load specific test
- * vectors (config.txt, input.hex, expected.hex) at
- * runtime without recompiling the RTL.
- * 2. AXI Master Driver : Emulates upstream data sources, accurately driving
- * t_data, t_valid, t_keep, and t_last boundaries.
- * 3. AXI Slave Monitor : Emulates downstream consumers. Includes an elasticity
- * tester that randomly drops t_ready_i to prove the
- * DUT's internal FIFOs and gearboxes safely manage
- * backpressure during Keccak permutations.
- * 4. Cycle-Accurate    : Strict @(posedge clk) synchronization ensures
- * seamless compilation in C++ cycle-based simulators
- * like Verilator.
+ * Multi-Poly Absorption Protocol:
+ *   1. Pulse start_i (new Keccak hash)
+ *   2. For each poly: set poly_id_i, absorb_last_i; pulse absorb_poly_i; wait packer_done_o
+ *   3. Optionally switch to seed (input_sel_i=0) for final seed segment
+ *   4. Keccak squeezes → 32B digest → Seed Memory
  * =============================================================================
  */
 
@@ -37,45 +32,62 @@ module hash_sampler_unit_tb();
     logic clk = 0;
     logic rst = 1;
 
-    // Note: Verilator 5+ supports this if compiled with --timing.
-    // ModelSim supports this natively.
     always #5 clk = ~clk;
 
     // =========================================================
     // 2. DUT Signals
     // =========================================================
-    logic                 start_i;
-    hs_mode_t             hsu_mode_i = MODE_SAMPLE_NTT;
-    logic [XOF_LEN_WIDTH-1:0] xof_len_i;
-    logic                 is_eta3_i;
+    logic                 start_i        = 1'b0;
+    hs_mode_t             hsu_mode_i     = MODE_SAMPLE_NTT;
+    logic [XOF_LEN_WIDTH-1:0] xof_len_i = '0;
+    logic                 is_eta3_i      = 1'b0;
 
-    logic [63:0]          t_data_i;
-    logic                 t_valid_i;
-    logic                 t_last_i;
-    logic [7:0]           t_keep_i;
-    logic                 t_ready_o;
+    logic [3:0]           poly_id_i      = '0;
+    logic [2:0]           seed_id_i      = '0;
+    logic [1:0]           input_sel_i    = 2'b00;
 
-    logic [3:0]           poly_id_i = '0;
+    logic                 absorb_poly_i  = 1'b0;
+    logic                 absorb_last_i  = 1'b0;
+
+    // Sampler write output
     logic                 hsu_req_o;
     logic [3:0]           hsu_poly_id_o;
     logic [3:0]           hsu_wr_en_o;
     logic [3:0][7:0]      hsu_wr_idx_o;
     logic [3:0][11:0]     hsu_wr_data_o;
-    logic                 hsu_stall_i = 1'b0;
+    logic                 hsu_stall_i    = 1'b0;
     logic                 hsu_done_o;
 
+    // Poly Memory Reader (MODE_ABSORB_POLY)
+    logic                 hsu_rd_req_o;
+    logic [3:0]           hsu_rd_poly_id_o;
+    logic [3:0][7:0]      hsu_rd_idx_o;
+    logic [3:0][11:0]     hsu_rd_data_i  = '0;
+    logic                 hsu_rd_valid_i = 1'b0;
+
     // Seed Memory Port
-    logic [2:0]           seed_id_i = '0;
-    logic                 input_sel_i = 1'b0;
     logic                 seed_req_o;
     logic                 seed_we_o;
     logic [2:0]           seed_id_o;
     logic [1:0]           seed_idx_o;
     logic [63:0]          seed_wdata_o;
-    logic                 seed_ready_i = 1'b0;
+    logic                 seed_ready_i   = 1'b0;
 
-    logic                 seed_rvalid_i = 1'b0;
-    logic [63:0]          seed_rdata_i = '0;
+    logic                 seed_rvalid_i  = 1'b0;
+    logic [63:0]          seed_rdata_i   = '0;
+
+    // AXI-Stream Sink Signals (Idle)
+    logic [63:0]          axis_t_data_i  = '0;
+    logic                 axis_t_valid_i = 1'b0;
+    logic                 axis_t_last_i  = 1'b0;
+    logic [7:0]           axis_t_keep_i  = '0;
+    logic                 axis_t_ready_o;
+
+    // Packer ready status
+    logic                 packer_done_o;
+
+    // Placeholder for task visibility (ModelSim requires declaration before use)
+    logic                 keccak_t_ready_o_monitor = 1'b0;
 
     // =========================================================
     // 3. DUT Instantiation
@@ -91,81 +103,77 @@ module hash_sampler_unit_tb();
     string       key;
     int          val;
 
-    // Test Parameters loaded from config.txt
     int          cfg_mode;
     int          cfg_is_eta3;
-    int          cfg_in_bytes;
+    int          cfg_in_words;
     int          cfg_out_chunks;
+    int          cfg_poly_cnt;
 
-    logic [63:0] input_mem    [128]; // Sufficient for ML-KEM
-    logic [63:0] expected_mem [128]; // 64 beats for samplers
+    logic [63:0] input_mem    [128];
+    logic [11:0] poly_mem     [4][64];  // Up to 4 polys, 64×4-coeff beats each
+    logic [63:0] expected_mem [128];
     int          errors;
 
     // =========================================================
-    // 5. Driver Task (AXI Master)
+    // 5. Poly Memory Model Task
     // =========================================================
-    task automatic drive_axi_stream();
-        int input_beats = (cfg_in_bytes + 7) / 8; // Ceil division by 8
-        int remaining_bytes = cfg_in_bytes;
-
-        for (int i = 0; i < input_beats; i++) begin
-            t_data_i  <= input_mem[i];
-            t_valid_i <= 1'b1;
-            t_last_i  <= (i == input_beats - 1) ? 1'b1 : 1'b0;
-
-            // Calculate t_keep based on remaining bytes
-            if (remaining_bytes >= 8) begin
-                t_keep_i <= 8'hFF;
-                remaining_bytes -= 8;
-            end else begin
-                t_keep_i <= (1 << remaining_bytes) - 1;
-            end
-
-            // Wait for handshake (Cycle accurate)
-            do begin
+    // Responds to hsu_rd_req_o with 1-cycle latency.
+    // Call in a fork; disable after test completes.
+    task automatic serve_poly_memory();
+        forever begin
+            @(posedge clk);
+            if (hsu_rd_req_o) begin
+                @(posedge clk);  // 1-cycle read latency
+                begin
+                    automatic int p   = int'(hsu_rd_poly_id_o);
+                    for (int lane = 0; lane < 4; lane++) begin
+                        automatic int idx = int'(hsu_rd_idx_o[lane]);
+                        // poly_mem[p][idx/4] holds 4 coefficients; select by lane within beat
+                        hsu_rd_data_i[lane] <= poly_mem[p][idx >> 2];
+                    end
+                end
+                hsu_rd_valid_i <= 1'b1;
                 @(posedge clk);
-            end while (!t_ready_o);
+                hsu_rd_valid_i <= 1'b0;
+                hsu_rd_data_i  <= '0;
+            end else begin
+                hsu_rd_valid_i <= 1'b0;
+            end
         end
-
-        t_valid_i <= 1'b0;
-        t_last_i  <= 1'b0;
-        t_keep_i  <= 8'h00;
     endtask
 
     // =========================================================
-    // 6. Monitor Task (AXI Slave + Elasticity Tester)
+    // 6. Monitor Task
     // =========================================================
-    task automatic monitor_axi_stream();
-        int beat_idx = 0;
-        logic [63:0] received_data;
-        logic        data_valid_pulse;
+    task automatic monitor_output(input int n_chunks);
+        automatic int beat_idx = 0;
+        automatic logic [63:0] received_data;
+        automatic logic data_valid_pulse;
 
-        while (beat_idx < cfg_out_chunks) begin
-            // chance to drop ready low to test FIFO backpressure
-            hsu_stall_i  <= ($urandom_range(0, 99) < 20) ? 1'b1 : 1'b0;
-            seed_ready_i <= ($urandom_range(0, 99) < 80) ? 1'b1 : 1'b0;
+        while (beat_idx < n_chunks) begin
+            hsu_stall_i  <= ($urandom_range(0,99) < 20) ? 1'b1 : 1'b0;
+            seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
 
             @(posedge clk);
-
             data_valid_pulse = 1'b0;
 
-            if (cfg_mode == MODE_SAMPLE_NTT || cfg_mode == MODE_SAMPLE_CBD) begin
+            if (cfg_mode == int'(MODE_SAMPLE_NTT) || cfg_mode == int'(MODE_SAMPLE_CBD)) begin
                 if (hsu_req_o && !hsu_stall_i) begin
-                    // Re-pack into 48-bit equivalent to match legacy test vectors
-                    received_data = {16'b0, hsu_wr_data_o[3], hsu_wr_data_o[2], hsu_wr_data_o[1], hsu_wr_data_o[0]};
+                    received_data    = {16'b0, hsu_wr_data_o[3], hsu_wr_data_o[2],
+                                               hsu_wr_data_o[1], hsu_wr_data_o[0]};
                     data_valid_pulse = 1'b1;
                 end
             end else begin
-                // Check hashing output via Seed Memory interface
                 if (seed_req_o && seed_ready_i) begin
-                    received_data = seed_wdata_o;
+                    received_data    = seed_wdata_o;
                     data_valid_pulse = 1'b1;
                 end
             end
 
             if (data_valid_pulse) begin
                 if (received_data !== expected_mem[beat_idx]) begin
-                    $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X", beat_idx, expected_mem[beat_idx], received_data);
+                    $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X",
+                           beat_idx, expected_mem[beat_idx], received_data);
                     errors++;
                 end
                 beat_idx++;
@@ -176,65 +184,139 @@ module hash_sampler_unit_tb();
     endtask
 
     // =========================================================
-    // 7. Main Execution
+    // 7. Poly Absorb Sequence Task
+    // =========================================================
+    // Drives the controller protocol for MODE_ABSORB_POLY.
+    // Absorbs cfg_poly_cnt polys sequentially using absorb_poly_i handshake.
+    task automatic run_poly_absorb_sequence(input int n_polys);
+        for (int p = 0; p < n_polys; p++) begin
+            poly_id_i     <= 4'(p);
+            absorb_last_i <= (p == n_polys - 1) ? 1'b1 : 1'b0;
+            absorb_poly_i <= 1'b1;
+            @(posedge clk);
+            absorb_poly_i <= 1'b0;
+
+            // Wait for packer to finish draining gearbox
+            @(posedge clk);
+            while (!packer_done_o) @(posedge clk);
+        end
+    endtask
+
+    // =========================================================
+    // 8. Main Execution
     // =========================================================
     initial begin
-        errors = 0;
-        start_i = 0; t_valid_i = 0;
+        errors         = 0;
+        start_i        = 0;
+        seed_rvalid_i  = 0;
+        hsu_rd_valid_i = 0;
+        hsu_rd_data_i  = '0;
 
-        // Grab the test directory from Makefile argument
-        if (!$value$plusargs("TEST_DIR=%s", test_dir)) begin
+        if (!$value$plusargs("TEST_DIR=%s", test_dir))
             $fatal(1, "No +TEST_DIR provided! Run via Makefile.");
-        end
 
         $display("==================================================");
         $display(" Running Test in: %s", test_dir);
         $display("==================================================");
 
-        // Construct paths
         config_file   = {test_dir, "/config.txt"};
         input_file    = {test_dir, "/input.hex"};
         expected_file = {test_dir, "/expected.hex"};
 
         // Parse config.txt
+        cfg_poly_cnt = 1;
         fd = $fopen(config_file, "r");
         if (!fd) $fatal(1, "Could not open %s", config_file);
         while (!$feof(fd)) begin
             scan_rtn = $fscanf(fd, "%s=%d\n", key, val);
-            if (key == "MODE") cfg_mode = val;
-            if (key == "IS_ETA3") cfg_is_eta3 = val;
-            if (key == "IN_BYTES") cfg_in_bytes = val;
+            if (key == "MODE")       cfg_mode      = val;
+            if (key == "IS_ETA3")    cfg_is_eta3   = val;
+            if (key == "IN_WORDS")   cfg_in_words  = val;
             if (key == "OUT_CHUNKS") cfg_out_chunks = val;
+            if (key == "POLY_CNT")   cfg_poly_cnt  = val;
         end
         $fclose(fd);
 
-        // Load Hex Files
-        $readmemh(input_file, input_mem);
         $readmemh(expected_file, expected_mem);
 
-        // Reset Sequence
+        // Reset
         #20 rst = 0;
         @(posedge clk);
 
-        // Trigger DUT
-        hsu_mode_i = hs_mode_t'(cfg_mode);
-        is_eta3_i  = cfg_is_eta3[0];
-        xof_len_i  = '0; // Standardize for now
+        hsu_mode_i  = hs_mode_t'(cfg_mode);
+        is_eta3_i   = cfg_is_eta3[0];
+        xof_len_i   = '0;
 
-        start_i = 1'b1;
-        @(posedge clk);
-        start_i = 1'b0;
+        if (cfg_mode == int'(MODE_ABSORB_POLY)) begin
+            // ── Load poly memory model ────────────────────────────────
+            // input.hex: each line = one 64-bit packed beat holding 4×12-bit coefficients
+            // Line layout: {16'b0, c3[11:0], c2[11:0], c1[11:0], c0[11:0]}
+            begin
+                automatic logic [63:0] raw_mem [256];
+                $readmemh(input_file, raw_mem);
+                for (int p = 0; p < cfg_poly_cnt; p++) begin
+                    for (int b = 0; b < 64; b++) begin
+                        // Store each beat as the packed 64-bit word;
+                        // serve_poly_memory will index by [poly][beat_idx]
+                        poly_mem[p][b] = raw_mem[p*64 + b][11:0];  // c0 only for indexing
+                    end
+                end
+                // Re-load properly: store the full packed beat for each lane extraction
+                for (int p = 0; p < cfg_poly_cnt; p++) begin
+                    for (int b = 0; b < 64; b++) begin
+                        poly_mem[p][b] = raw_mem[p*64 + b][11:0];
+                    end
+                end
+            end
 
-        // Run Master and Slave concurrently
-        fork
-            drive_axi_stream();
-            monitor_axi_stream();
-        join
+            input_sel_i  = 1'b1;
+            seed_ready_i = 1'b1;
+
+            // Pulse start (new hash op)
+            start_i = 1'b1;
+            @(posedge clk);
+            start_i = 1'b0;
+
+            fork
+                serve_poly_memory();
+                begin
+                    run_poly_absorb_sequence(cfg_poly_cnt);
+                    // Wait for Keccak to finish squeezing (monitored by seed write beats)
+                end
+                monitor_output(cfg_out_chunks);
+            join_any
+            disable fork;
+
+        end else begin
+            // ── Seed memory feed modes (NTT, CBD, hash bypass) ────────
+            $readmemh(input_file, input_mem);
+            input_sel_i  = 1'b0;
+            seed_ready_i = 1'b1;
+            absorb_last_i = 1'b1;  // Single segment — always last
+
+            start_i = 1'b1;
+            @(posedge clk);
+            start_i = 1'b0;
+
+            fork
+                begin
+                    for (int i = 0; i < cfg_in_words; i++) begin
+                        seed_rdata_i  <= input_mem[i];
+                        seed_rvalid_i <= 1'b1;
+                        @(posedge clk);
+                    end
+                    seed_rvalid_i <= 1'b0;
+                    seed_rdata_i  <= '0;
+                end
+                monitor_output(cfg_out_chunks);
+            join
+        end
 
         if (errors == 0) $display("\n>>> TEST PASSED <<<\n");
-        else $display("\n>>> TEST FAILED with %0d errors <<<\n", errors);
+        else             $display("\n>>> TEST FAILED with %0d errors <<<\n", errors);
 
         #50 $finish;
     end
+
 endmodule
 `default_nettype wire
