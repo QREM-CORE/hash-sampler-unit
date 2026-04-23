@@ -235,22 +235,29 @@ No changes needed now. `hs_mode_t` already has all required modes. `MODE_SAMPLE_
 
 #### Test Vector Workflow
 
-Test vectors come from two sources:
+Test vectors are **fully generated** by [`verif/mlkem-python/tests/Intermediate_hash_sampling.py`](file:///home/kiet/repos/hash-sampler-unit/verif/mlkem-python/tests/Intermediate_hash_sampling.py). Script writes directly to `verif/test_vectors.json`. No manual editing required.
 
-1. **Auto-generated** — [`verif/mlkem-python/tests/Intermediate_hash_sampling.py`](file:///home/kiet/repos/hash-sampler-unit/verif/mlkem-python/tests/Intermediate_hash_sampling.py) produces reference vectors in `verif/mlkem-python/tests/results/output_hsu_sampling.json`. These cover: NTT (A, A2), CBD (B, C), SHA3-512 bypass (D), CBD-from-σ flow (G), and SHAKE256 bypass (E).
-2. **Manual** — Test F (`MODE_ABSORB_POLY`) uses `input_coeffs` format (4×12-bit packed coefficient beats). Maintained directly in `verif/test_vectors.json`.
+| Test | Type | Notes |
+|------|------|-------|
+| A, A2 | NTT sampler | Random ρ, fixed coords |
+| B, C | CBD sampler | η=2, η=3 |
+| D | SHA3-512 bypass | Regression baseline for σ capture |
+| E | SHAKE256 bypass | |
+| F | ABSORB_POLY | Deterministic coeffs 0–255, hardcoded SHA3-256 digest |
+| G | CBD-from-σ flow | Two-phase: `G(d)` → internal σ → CBD |
 
-**Process:** `cd verif/mlkem-python && python3 tests/Intermediate_hash_sampling.py` → copy generated vectors into `verif/test_vectors.json` → append manual Test F.
+**Pipeline:** `make run_hash_sampler_unit_tb` triggers:
+1. `verif/mlkem-python/tests/Intermediate_hash_sampling.py` → writes `verif/test_vectors.json`
+2. `verif/generate_tb_files.py` → expands into `verif/test_vectors/*/`
 
+`verif/test_vectors.json` is gitignored (generated artifact).
 
 #### [MODIFY] [generate_tb_files.py](file:///home/kiet/repos/hash-sampler-unit/verif/generate_tb_files.py)
 
 1. Add `ROW`, `COL`, `CBD_N`, and `RUN_G_FIRST` fields to config.txt generation.
 2. Port Test A coordinate logic: `input_seed_hex` is 32-byte ρ only. `row`/`col` in config.
-3. Add new test vectors:
-   - **Test D (Baseline)**: Full SHA3-512 bypass → verify all 8 beats land in Seed RAM.
-   - **Test A2 (Asymmetric)**: NTT with `(row=2, col=5)` → catches byte-swap bugs.
-   - **Test G (Flow Check)**: Set `RUN_G_FIRST=1`, `CBD_N=0x07` → runs full G(d) -> Capture -> CBD sequence.
+3. New test vectors handled upstream by `Intermediate_hash_sampling.py`. `generate_tb_files.py` only needs to handle new config keys.
+
 
 ---
 
