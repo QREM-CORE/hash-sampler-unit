@@ -332,7 +332,7 @@ module hash_sampler_unit_tb();
 
                 wait (DUT.sigma_valid == 1'b1);
                 $display("sigma_reg captured: %x", DUT.sigma_reg);
-                
+
                 // Assert against EXPECTED_SIGMA if sigma.hex exists
                 fd_sigma = $fopen({test_dir, "/sigma.hex"}, "r");
                 if (fd_sigma) begin
@@ -345,7 +345,7 @@ module hash_sampler_unit_tb();
                         $display("[PASS] sigma_reg matches expected value.");
                     end
                 end
-                
+
                 @(posedge clk);
 
                 hsu_mode_i = hs_mode_t'(cfg_mode);
