@@ -237,7 +237,7 @@ module hash_sampler_unit #(
             sigma_reg       <= '0;
             sigma_valid     <= 1'b0;
         end else begin
-            if (start_i) begin
+            if (start_i && hsu_mode_i == MODE_HASH_SHA3_512) begin
                 sha512_beat_cnt <= '0;
                 sigma_valid     <= 1'b0;
             end else if (hsu_mode_i == MODE_HASH_SHA3_512
@@ -442,6 +442,11 @@ module hash_sampler_unit #(
     // Top-Level Control Logic (Demux / Mux Routing)
     // ==========================================================
 
+    // NOTE: seed_wr_beat_cnt is $clog2(SEED_BEATS) = 2 bits wide.
+    // For SHA3-512 (8 output beats), the σ capture logic (beats 4-7)
+    // suppresses seed_req_o, preventing this counter from advancing
+    // past 3. Any future mode writing >4 beats MUST apply the same
+    // guard or widen this counter.
     logic [$clog2(SEED_BEATS)-1:0] seed_wr_beat_cnt;
 
     always_ff @(posedge clk or posedge rst) begin

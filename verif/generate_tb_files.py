@@ -109,7 +109,11 @@ def generate_files(json_file):
                 f.write(f"COL={col}\n")
                 f.write(f"CBD_N={cbd_n}\n")
                 f.write(f"RUN_G_FIRST={run_g_first}\n")
-
+                sigma_expected = test.get('sigma_expected', '')
+            
+            if sigma_expected:
+                with open(os.path.join(test_dir, 'sigma.hex'), 'w') as sf:
+                    sf.write(f"{sigma_expected}\n")
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
                 for i in range(0, len(byte_list), 8):
                     chunk = byte_list[i:i+8]

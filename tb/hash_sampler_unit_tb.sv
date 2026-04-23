@@ -101,11 +101,11 @@ module hash_sampler_unit_tb();
     // =========================================================
     // 4. Test Variables & Memory
     // =========================================================
-    string       test_dir;
-    string       config_file, input_file, expected_file;
-    int          fd, scan_rtn;
+    string       test_dir, config_file, input_file, expected_file;
     string       key;
     int          val;
+    int          fd, scan_rtn, fd_sigma;
+    logic [255:0] expected_sigma_val;
 
     int          cfg_mode;
     int          cfg_is_eta3;
@@ -332,6 +332,20 @@ module hash_sampler_unit_tb();
 
                 wait (DUT.sigma_valid == 1'b1);
                 $display("sigma_reg captured: %x", DUT.sigma_reg);
+                
+                // Assert against EXPECTED_SIGMA if sigma.hex exists
+                fd_sigma = $fopen({test_dir, "/sigma.hex"}, "r");
+                if (fd_sigma) begin
+                    scan_rtn = $fscanf(fd_sigma, "%x", expected_sigma_val);
+                    $fclose(fd_sigma);
+                    if (DUT.sigma_reg !== expected_sigma_val) begin
+                        $error("[FAIL] sigma_reg mismatch!\n       Expected: %x\n       Got:      %x", expected_sigma_val, DUT.sigma_reg);
+                        errors++;
+                    end else begin
+                        $display("[PASS] sigma_reg matches expected value.");
+                    end
+                end
+                
                 @(posedge clk);
 
                 hsu_mode_i = hs_mode_t'(cfg_mode);
