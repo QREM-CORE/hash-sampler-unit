@@ -55,6 +55,10 @@ def generate_files(json_file):
         hsu_mode_int = MODE_MAP.get(hsu_mode_str, 0)
         is_eta3      = config.get('is_eta3_i', 0)
         poly_cnt     = config.get('poly_cnt', 1)
+        row          = config.get('ROW', 0)
+        col          = config.get('COL', 0)
+        cbd_n        = config.get('CBD_N', 0)
+        run_g_first  = config.get('RUN_G_FIRST', 0)
         out_chunks   = len(test['output_beats'])
 
         # ── Generate expected.hex ──────────────────────────────────────────
@@ -75,6 +79,10 @@ def generate_files(json_file):
                 f.write(f"IN_WORDS={in_words}\n")
                 f.write(f"OUT_CHUNKS={out_chunks}\n")
                 f.write(f"POLY_CNT={poly_cnt}\n")
+                f.write(f"ROW={row}\n")
+                f.write(f"COL={col}\n")
+                f.write(f"CBD_N={cbd_n}\n")
+                f.write(f"RUN_G_FIRST={run_g_first}\n")
 
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
                 for beat in coeff_beats:
@@ -97,6 +105,10 @@ def generate_files(json_file):
                 f.write(f"IN_WORDS={in_words}\n")
                 f.write(f"OUT_CHUNKS={out_chunks}\n")
                 f.write(f"POLY_CNT=1\n")
+                f.write(f"ROW={row}\n")
+                f.write(f"COL={col}\n")
+                f.write(f"CBD_N={cbd_n}\n")
+                f.write(f"RUN_G_FIRST={run_g_first}\n")
 
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
                 for i in range(0, len(byte_list), 8):

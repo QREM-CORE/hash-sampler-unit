@@ -65,6 +65,9 @@ module hash_sampler_unit #(
 
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
     input  wire seed_id_e                       seed_id_i,
+    input  wire [7:0]                           row_i,
+    input  wire [7:0]                           col_i,
+    input  wire [7:0]                           cbd_n_i,
 
     // Selects Keccak input source: 0 = Seed Memory, 1 = Poly Memory Reader
     input  wire  [1:0]                          input_sel_i,
@@ -177,6 +180,102 @@ module hash_sampler_unit #(
     logic [3:0][$clog2(NCOEFF)-1:0]             packer_rd_idx;
 
     // ==========================================================
+    // Internal State
+    // ==========================================================
+
+    // Seed input beat counter (used for t_last in seed path)
+    logic [$clog2(SEED_BEATS)-1:0] seed_rd_beat_cnt;
+    logic                          seed_beat_last;
+
+    assign seed_beat_last = (seed_rd_beat_cnt == SEED_BEATS - 1);
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            seed_rd_beat_cnt <= '0;
+        end else begin
+            if (start_i)
+                seed_rd_beat_cnt <= '0;
+            else if (input_sel_i == 2'b00 && seed_rvalid_i && keccak_t_ready_o)
+                seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
+        end
+    end
+
+    // --- 5th-Beat Coordinate Injection (MODE_SAMPLE_NTT only) ---
+    logic       coord_beat_pending;    // High after 4th seed beat consumed, before 5th emitted
+    logic       coord_beat_fire;       // 5th beat accepted by Keccak
+    logic [7:0] row_lat, col_lat;      // Latched on start_i
+
+    // Latch coordinates
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            row_lat <= '0;
+            col_lat <= '0;
+            coord_beat_pending <= 1'b0;
+        end else begin
+            if (start_i) begin
+                row_lat <= row_i;
+                col_lat <= col_i;
+                coord_beat_pending <= 1'b0;
+            end else if (hsu_mode_i == MODE_SAMPLE_NTT) begin
+                if (seed_beat_last && seed_rvalid_i && keccak_t_ready_o)
+                    coord_beat_pending <= 1'b1;
+                else if (coord_beat_fire)
+                    coord_beat_pending <= 1'b0;
+            end
+        end
+    end
+    assign coord_beat_fire = coord_beat_pending && keccak_t_ready_o;
+
+    // --- Local σ Register (64-byte SHA3-512 output, beats 4-7) ---
+    logic [255:0] sigma_reg;
+    logic [2:0]   sha512_beat_cnt;     // Counts 0..7 output beats
+    logic         sigma_valid;         // Set after all 8 beats captured
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            sha512_beat_cnt <= '0;
+            sigma_reg       <= '0;
+            sigma_valid     <= 1'b0;
+        end else begin
+            if (start_i) begin
+                sha512_beat_cnt <= '0;
+                sigma_valid     <= 1'b0;
+            end else if (hsu_mode_i == MODE_HASH_SHA3_512
+                         && keccak_t_valid_o && keccak_t_ready_i) begin
+                sha512_beat_cnt <= sha512_beat_cnt + 1;
+                if (sha512_beat_cnt >= 3'd4)
+                    sigma_reg[64*(sha512_beat_cnt - 3'd4) +: 64] <= keccak_t_data_o;
+                if (sha512_beat_cnt == 3'd7)
+                    sigma_valid <= 1'b1;
+            end
+        end
+    end
+
+    // --- CBD Feed State ---
+    logic [2:0] sigma_feed_cnt;       // 0..4 beats: 0-3 = σ, 4 = N byte
+    logic       sigma_feeding;        // Active during CBD σ||N absorption
+    logic [7:0] cbd_n_lat;            // Latched N value
+
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst) begin
+            sigma_feed_cnt <= '0;
+            sigma_feeding  <= 1'b0;
+            cbd_n_lat      <= '0;
+        end else begin
+            if (start_i && hsu_mode_i == MODE_SAMPLE_CBD) begin
+                sigma_feed_cnt <= '0;
+                sigma_feeding  <= 1'b1;
+                cbd_n_lat      <= cbd_n_i;
+            end else if (sigma_feeding && keccak_t_ready_o) begin
+                if (sigma_feed_cnt == 3'd4)
+                    sigma_feeding <= 1'b0;
+                else
+                    sigma_feed_cnt <= sigma_feed_cnt + 1;
+            end
+        end
+    end
+
+    // ==========================================================
     // Module Instantiations
     // ==========================================================
 
@@ -199,23 +298,6 @@ module hash_sampler_unit #(
         .m_axis_tkeep     (keccak_t_keep_o),
         .m_axis_tready    (keccak_t_ready_i)
     );
-
-    // Seed input beat counter (used for t_last in seed path)
-    logic [$clog2(SEED_BEATS)-1:0] seed_rd_beat_cnt;
-    logic                          seed_beat_last;
-
-    assign seed_beat_last = (seed_rd_beat_cnt == SEED_BEATS - 1);
-
-    always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            seed_rd_beat_cnt <= '0;
-        end else begin
-            if (start_i)
-                seed_rd_beat_cnt <= '0;
-            else if (input_sel_i == 2'b00 && seed_rvalid_i && keccak_t_ready_o)
-                seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
-        end
-    end
 
     // Keccak start + mode
     assign keccak_start   = start_i;
@@ -240,11 +322,34 @@ module hash_sampler_unit #(
                 keccak_t_keep_i  = axis_t_keep_i;
             end
             default: begin
-                // Seed Memory path
-                keccak_t_data_i  = seed_rdata_i;
-                keccak_t_valid_i = seed_rvalid_i;
-                keccak_t_last_i  = seed_beat_last && absorb_last_i;
-                keccak_t_keep_i  = 8'hFF;
+                // Seed Memory path OR local overrides
+                if (sigma_feeding) begin
+                    if (sigma_feed_cnt <= 3'd3) begin
+                        // Beats 0-3: stream σ (256 bits = 4 × 64-bit)
+                        keccak_t_data_i  = sigma_reg[64*sigma_feed_cnt[1:0] +: 64];
+                        keccak_t_valid_i = 1'b1;
+                        keccak_t_last_i  = 1'b0;
+                        keccak_t_keep_i  = 8'hFF;
+                    end else begin
+                        // Beat 4: inject N byte, then t_last
+                        keccak_t_data_i  = {56'b0, cbd_n_lat};
+                        keccak_t_valid_i = 1'b1;
+                        keccak_t_last_i  = 1'b1;
+                        keccak_t_keep_i  = 8'h01;    // 1 valid byte
+                    end
+                end else if (coord_beat_pending) begin
+                    // Synthetic 5th beat: inject (col, row) coordinates
+                    keccak_t_data_i  = {48'b0, row_lat, col_lat};
+                    keccak_t_valid_i = 1'b1;
+                    keccak_t_last_i  = 1'b1;             // Always last for matrix gen input
+                    keccak_t_keep_i  = 8'h03;            // 2 valid bytes
+                end else begin
+                    keccak_t_data_i  = seed_rdata_i;
+                    keccak_t_valid_i = seed_rvalid_i;
+                    keccak_t_last_i  = seed_beat_last && absorb_last_i
+                                       && (hsu_mode_i != MODE_SAMPLE_NTT); // Suppress for NTT — 5th beat handles it
+                    keccak_t_keep_i  = 8'hFF;
+                end
             end
         endcase
     end
@@ -408,10 +513,19 @@ module hash_sampler_unit #(
                 if      (hsu_mode_i == MODE_HASH_SHA3_256) keccak_mode_sel = SHA3_256;
                 else if (hsu_mode_i == MODE_HASH_SHA3_512) keccak_mode_sel = SHA3_512;
                 else                                        keccak_mode_sel = SHAKE256;
-                seed_req_o       = keccak_t_valid_o;
-                seed_we_o        = 1'b1;
-                seed_wdata_o     = keccak_t_data_o;
-                keccak_t_ready_i = seed_ready_i;
+
+                if (hsu_mode_i == MODE_HASH_SHA3_512 && sha512_beat_cnt >= 3'd4) begin
+                    // Beats 4-7: trap σ locally, do NOT write to Seed RAM
+                    seed_req_o       = 1'b0;
+                    seed_we_o        = 1'b0;
+                    seed_wdata_o     = keccak_t_data_o;
+                    keccak_t_ready_i = 1'b1;   // Always accept (no backpressure needed)
+                end else begin
+                    seed_req_o       = keccak_t_valid_o;
+                    seed_we_o        = 1'b1;
+                    seed_wdata_o     = keccak_t_data_o;
+                    keccak_t_ready_i = seed_ready_i;
+                end
             end
 
             MODE_ABSORB_POLY: begin
