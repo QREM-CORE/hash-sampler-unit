@@ -55,7 +55,8 @@ module hash_sampler_unit_tb();
 
     // Sampler write output
     logic                 hsu_req_o;
-    logic [POLY_ID_WIDTH-1:0] hsu_poly_id_o;
+    logic                 hsu_rd_en_o;
+    logic [POLY_ID_WIDTH-1:0] hsu_wr_poly_id_o;
     logic [3:0]           hsu_wr_en_o;
     logic [3:0][$clog2(NCOEFF)-1:0] hsu_wr_idx_o;
     logic [3:0][COEFF_WIDTH-1:0] hsu_wr_data_o;
@@ -63,22 +64,25 @@ module hash_sampler_unit_tb();
     logic                 hsu_done_o;
 
     // Poly Memory Reader (MODE_ABSORB_POLY)
-    logic                 hsu_rd_req_o;
     logic [POLY_ID_WIDTH-1:0] hsu_rd_poly_id_o;
     logic [3:0][$clog2(NCOEFF)-1:0] hsu_rd_idx_o;
+    logic [3:0]           hsu_rd_lane_valid_o;
+    logic [3:0]           hsu_rd_lane_valid_i = '0;
     logic [3:0][COEFF_WIDTH-1:0] hsu_rd_data_i  = '0;
     logic                 hsu_rd_valid_i = 1'b0;
+    logic [POLY_ID_WIDTH-1:0] hsu_rd_poly_id_i = '0;
+    logic [3:0][$clog2(NCOEFF)-1:0] hsu_rd_idx_i = '0;
 
     // Seed Memory Port
-    logic                 seed_req_o;
-    logic                 seed_we_o;
-    seed_id_e             seed_id_o;
-    logic [$clog2(SEED_BEATS)-1:0] seed_idx_o;
-    logic [SEED_W-1:0]    seed_wdata_o;
-    logic                 seed_ready_i   = 1'b0;
+    logic                 hsu_seed_req_o;
+    logic                 hsu_seed_we_o;
+    seed_id_e             hsu_seed_id_o;
+    logic [$clog2(SEED_BEATS)-1:0] hsu_seed_idx_o;
+    logic [SEED_W-1:0]    hsu_seed_wdata_o;
+    logic                 hsu_seed_ready_i   = 1'b0;
 
-    logic                 seed_rvalid_i  = 1'b0;
-    logic [SEED_W-1:0]    seed_rdata_i   = '0;
+    logic                 hsu_seed_rvalid_i  = 1'b0;
+    logic [SEED_W-1:0]    hsu_seed_rdata_i   = '0;
 
     // AXI-Stream Sink Signals (Idle)
     logic [SEED_W-1:0]    axis_t_data_i  = '0;
@@ -130,7 +134,7 @@ module hash_sampler_unit_tb();
     task automatic serve_poly_memory();
         forever begin
             @(posedge clk);
-            if (hsu_rd_req_o) begin
+            if (hsu_req_o && hsu_rd_en_o) begin
                 @(posedge clk);  // 1-cycle read latency
                 begin
                     automatic int p   = int'(hsu_rd_poly_id_o);
@@ -157,25 +161,44 @@ module hash_sampler_unit_tb();
         automatic int beat_idx = 0;
         automatic logic [63:0] received_data;
         automatic logic data_valid_pulse;
+        automatic int expected_idx = 0;
 
         while (beat_idx < n_chunks) begin
             hsu_stall_i  <= ($urandom_range(0,99) < 20) ? 1'b1 : 1'b0;
-            seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
+            hsu_seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
 
             @(posedge clk);
             data_valid_pulse = 1'b0;
 
             if (cfg_mode == int'(MODE_SAMPLE_NTT) || cfg_mode == int'(MODE_SAMPLE_CBD)) begin
                 if (hsu_req_o && !hsu_stall_i) begin
+                    if (hsu_wr_en_o === 4'b0000) begin
+                        $error("[FAIL] Poly write transaction valid but hsu_wr_en_o is 0!");
+                        errors++;
+                    end
+                    if (hsu_wr_idx_o[0] !== expected_idx[$clog2(NCOEFF)-1:0]) begin
+                         $error("[FAIL] Poly write index mismatch! Expected: %0d | Got: %0d", expected_idx[$clog2(NCOEFF)-1:0], hsu_wr_idx_o[0]);
+                         errors++;
+                    end
                     received_data    = { (SEED_W - 4*COEFF_WIDTH)'(0),
                                                hsu_wr_data_o[3], hsu_wr_data_o[2],
                                                hsu_wr_data_o[1], hsu_wr_data_o[0]};
                     data_valid_pulse = 1'b1;
+                    expected_idx += 4;
                 end
             end else begin
-                if (seed_req_o && seed_ready_i) begin
-                    received_data    = seed_wdata_o;
+                if (hsu_seed_req_o && hsu_seed_ready_i) begin
+                    if (hsu_seed_we_o !== 1'b1) begin
+                        $error("[FAIL] Seed write transaction valid but hsu_seed_we_o is 0!");
+                        errors++;
+                    end
+                    if (hsu_seed_idx_o !== expected_idx[$clog2(SEED_BEATS)-1:0]) begin
+                         $error("[FAIL] Seed write index mismatch! Expected: %0d | Got: %0d", expected_idx[$clog2(SEED_BEATS)-1:0], hsu_seed_idx_o);
+                         errors++;
+                    end
+                    received_data    = hsu_seed_wdata_o;
                     data_valid_pulse = 1'b1;
+                    expected_idx += 1;
                 end
             end
 
@@ -189,7 +212,7 @@ module hash_sampler_unit_tb();
             end
         end
         hsu_stall_i  <= 1'b0;
-        seed_ready_i <= 1'b0;
+        hsu_seed_ready_i <= 1'b0;
     endtask
 
     // =========================================================
@@ -217,7 +240,7 @@ module hash_sampler_unit_tb();
     initial begin
         errors         = 0;
         start_i        = 0;
-        seed_rvalid_i  = 0;
+        hsu_seed_rvalid_i  = 0;
         hsu_rd_valid_i = 0;
         hsu_rd_data_i  = '0;
 
@@ -290,7 +313,7 @@ module hash_sampler_unit_tb();
             end
 
             input_sel_i  = 1'b1;
-            seed_ready_i = 1'b1;
+            hsu_seed_ready_i = 1'b1;
 
             // Pulse start (new hash op)
             start_i = 1'b1;
@@ -311,7 +334,7 @@ module hash_sampler_unit_tb();
             // ── Seed memory feed modes (NTT, CBD, hash bypass) ────────
             $readmemh(input_file, input_mem);
             input_sel_i  = 1'b0;
-            seed_ready_i = 1'b1;
+            hsu_seed_ready_i = 1'b1;
             absorb_last_i = 1'b1;  // Single segment — always last
 
             if (cfg_run_g_first) begin
@@ -323,12 +346,12 @@ module hash_sampler_unit_tb();
 
                 // Send 4 beats of bypass input
                 for (int i = 0; i < 4; i++) begin
-                    seed_rdata_i  <= input_mem[i];
-                    seed_rvalid_i <= 1'b1;
+                    hsu_seed_rdata_i  <= input_mem[i];
+                    hsu_seed_rvalid_i <= 1'b1;
                     do @(posedge clk); while (!DUT.keccak_t_ready_o);
                 end
-                seed_rvalid_i <= 1'b0;
-                seed_rdata_i  <= '0;
+                hsu_seed_rvalid_i <= 1'b0;
+                hsu_seed_rdata_i  <= '0;
 
                 wait (DUT.sigma_valid == 1'b1);
                 $display("sigma_reg captured: %x", DUT.sigma_reg);
@@ -359,15 +382,17 @@ module hash_sampler_unit_tb();
             fork
                 begin
                     for (int i = 0; i < cfg_in_words; i++) begin
-                        seed_rdata_i  <= input_mem[i];
-                        seed_rvalid_i <= 1'b1;
+                        hsu_seed_rdata_i  <= input_mem[i];
+                        hsu_seed_rvalid_i <= 1'b1;
                         do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
                     end
-                    seed_rvalid_i <= 1'b0;
-                    seed_rdata_i  <= '0;
+                    hsu_seed_rvalid_i <= 1'b0;
+                    hsu_seed_rdata_i  <= '0;
                 end
                 monitor_output(cfg_out_chunks);
             join
+
+            // We removed the wait(hsu_done_o) because it can race with monitor exits and hang.
         end
 
         if (errors == 0) $display("\n>>> TEST PASSED <<<\n");
