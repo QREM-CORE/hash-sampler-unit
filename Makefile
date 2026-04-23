@@ -22,7 +22,7 @@ $(VECTOR_STAMP): $(VECTOR_SCRIPT) $(VECTOR_PROC)
 	@mkdir -p verif/test_vectors
 	touch $(VECTOR_STAMP)
 # 3. Local Cleanup
-EXTRA_CLEAN = verif/test_vectors/ $(VECTOR_JSON)
+EXTRA_CLEAN = verif/test_vectors/ $(VECTOR_JSON) test_vectors/
 
 # =========================================================
 # Hash Sampler Unit Override Target
