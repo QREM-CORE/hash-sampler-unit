@@ -4,16 +4,25 @@ include build-tools/common.mk
 # =========================================================
 # Test Vector Generation Logic
 # =========================================================
+VECTOR_SCRIPT := verif/mlkem-python/tests/Intermediate_hash_sampling.py
+VECTOR_PROC   := verif/generate_tb_files.py
 VECTOR_JSON   := verif/test_vectors.json
-VECTOR_SCRIPT := verif/generate_tb_files.py
 VECTOR_STAMP  := verif/test_vectors/.generated_stamp
 
-# This rule tells Make: "If the JSON or Script is newer than the stamp file, run this."
-$(VECTOR_STAMP): $(VECTOR_JSON) $(VECTOR_SCRIPT)
-	@echo "=== Regenerating Test Vectors from JSON ==="
-	cd verif && python3 generate_tb_files.py
+# Run Python reference script first (generates verif/test_vectors.json),
+# then generate_tb_files.py to expand it into per-test directories.
+$(VECTOR_STAMP): $(VECTOR_SCRIPT) $(VECTOR_PROC)
+	@echo "=== Setting up Python venv for vector generation ==="
+	python3 -m venv verif/.venv
+	verif/.venv/bin/pip install -q -r verif/mlkem-python/requirements.txt
+	@echo "=== Generating reference vectors ==="
+	cd verif/mlkem-python && $(CURDIR)/verif/.venv/bin/python3 tests/Intermediate_hash_sampling.py
+	@echo "=== Expanding test vector directories ==="
+	cd verif && $(CURDIR)/verif/.venv/bin/python3 generate_tb_files.py
+	@mkdir -p verif/test_vectors
+	touch $(VECTOR_STAMP)
 # 3. Local Cleanup
-EXTRA_CLEAN = verif/test_vectors/
+EXTRA_CLEAN = verif/test_vectors/ $(VECTOR_JSON)
 
 # =========================================================
 # Hash Sampler Unit Override Target

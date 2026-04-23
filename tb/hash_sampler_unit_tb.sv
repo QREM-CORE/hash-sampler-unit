@@ -45,6 +45,9 @@ module hash_sampler_unit_tb();
 
     logic [POLY_ID_WIDTH-1:0] poly_id_i      = '0;
     seed_id_e             seed_id_i      = SEED_ID_D;
+    logic [7:0]           row_i          = '0;
+    logic [7:0]           col_i          = '0;
+    logic [7:0]           cbd_n_i        = '0;
     logic [1:0]           input_sel_i    = 2'b00;
 
     logic                 absorb_poly_i  = 1'b0;
@@ -98,17 +101,21 @@ module hash_sampler_unit_tb();
     // =========================================================
     // 4. Test Variables & Memory
     // =========================================================
-    string       test_dir;
-    string       config_file, input_file, expected_file;
-    int          fd, scan_rtn;
+    string       test_dir, config_file, input_file, expected_file;
     string       key;
     int          val;
+    int          fd, scan_rtn, fd_sigma;
+    logic [255:0] expected_sigma_val;
 
     int          cfg_mode;
     int          cfg_is_eta3;
     int          cfg_in_words;
     int          cfg_out_chunks;
     int          cfg_poly_cnt;
+    int          cfg_row;
+    int          cfg_col;
+    int          cfg_cbd_n;
+    int          cfg_run_g_first;
 
     logic [SEED_W-1:0] input_mem    [128];
     logic [COEFF_WIDTH-1:0] poly_mem     [NUM_POLYS][64];  // Up to NUM_POLYS, 64×4-coeff beats each
@@ -227,6 +234,10 @@ module hash_sampler_unit_tb();
 
         // Parse config.txt
         cfg_poly_cnt = 1;
+        cfg_row = 0;
+        cfg_col = 0;
+        cfg_cbd_n = 0;
+        cfg_run_g_first = 0;
         fd = $fopen(config_file, "r");
         if (!fd) $fatal(1, "Could not open %s", config_file);
         while (!$feof(fd)) begin
@@ -236,6 +247,10 @@ module hash_sampler_unit_tb();
             if (key == "IN_WORDS")   cfg_in_words  = val;
             if (key == "OUT_CHUNKS") cfg_out_chunks = val;
             if (key == "POLY_CNT")   cfg_poly_cnt  = val;
+            if (key == "ROW")        cfg_row       = val;
+            if (key == "COL")        cfg_col       = val;
+            if (key == "CBD_N")      cfg_cbd_n     = val;
+            if (key == "RUN_G_FIRST")cfg_run_g_first = val;
         end
         $fclose(fd);
 
@@ -248,6 +263,9 @@ module hash_sampler_unit_tb();
         hsu_mode_i  = hs_mode_t'(cfg_mode);
         is_eta3_i   = cfg_is_eta3[0];
         xof_len_i   = '0;
+        row_i       = cfg_row[7:0];
+        col_i       = cfg_col[7:0];
+        cbd_n_i     = cfg_cbd_n[7:0];
 
         if (cfg_mode == int'(MODE_ABSORB_POLY)) begin
             // ── Load poly memory model ────────────────────────────────
@@ -296,6 +314,44 @@ module hash_sampler_unit_tb();
             seed_ready_i = 1'b1;
             absorb_last_i = 1'b1;  // Single segment — always last
 
+            if (cfg_run_g_first) begin
+                $display("Running SHA3-512 Regression first to load sigma_reg...");
+                hsu_mode_i = MODE_HASH_SHA3_512;
+                start_i = 1'b1;
+                @(posedge clk);
+                start_i = 1'b0;
+
+                // Send 4 beats of bypass input
+                for (int i = 0; i < 4; i++) begin
+                    seed_rdata_i  <= input_mem[i];
+                    seed_rvalid_i <= 1'b1;
+                    do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                end
+                seed_rvalid_i <= 1'b0;
+                seed_rdata_i  <= '0;
+
+                wait (DUT.sigma_valid == 1'b1);
+                $display("sigma_reg captured: %x", DUT.sigma_reg);
+
+                // Assert against EXPECTED_SIGMA if sigma.hex exists
+                fd_sigma = $fopen({test_dir, "/sigma.hex"}, "r");
+                if (fd_sigma) begin
+                    scan_rtn = $fscanf(fd_sigma, "%x", expected_sigma_val);
+                    $fclose(fd_sigma);
+                    if (DUT.sigma_reg !== expected_sigma_val) begin
+                        $error("[FAIL] sigma_reg mismatch!\n       Expected: %x\n       Got:      %x", expected_sigma_val, DUT.sigma_reg);
+                        errors++;
+                    end else begin
+                        $display("[PASS] sigma_reg matches expected value.");
+                    end
+                end
+
+                @(posedge clk);
+
+                hsu_mode_i = hs_mode_t'(cfg_mode);
+                $display("Now running target test...");
+            end
+
             start_i = 1'b1;
             @(posedge clk);
             start_i = 1'b0;
@@ -305,7 +361,7 @@ module hash_sampler_unit_tb();
                     for (int i = 0; i < cfg_in_words; i++) begin
                         seed_rdata_i  <= input_mem[i];
                         seed_rvalid_i <= 1'b1;
-                        @(posedge clk);
+                        do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
                     end
                     seed_rvalid_i <= 1'b0;
                     seed_rdata_i  <= '0;

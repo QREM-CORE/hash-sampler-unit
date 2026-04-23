@@ -10,3 +10,7 @@
 [submodule "lib/common-rtl"]
 	path = lib/common-rtl
 	url = ../common-rtl.git
+[submodule "verif/mlkem-python"]
+	path = verif/mlkem-python
+	url = ../mlkem-python.git
+	branch = main
