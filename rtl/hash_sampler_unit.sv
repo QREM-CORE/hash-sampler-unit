@@ -82,7 +82,8 @@ module hash_sampler_unit #(
 
     // ── Poly Memory Writer Output (sampler modes: NTT, CBD) ──────────────────
     output logic                                hsu_req_o,
-    output logic [$clog2(NUM_POLYS)-1:0]        hsu_poly_id_o,
+    output logic                                hsu_rd_en_o,
+    output logic [$clog2(NUM_POLYS)-1:0]        hsu_wr_poly_id_o,
     output logic [3:0]                          hsu_wr_en_o,
     output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_wr_idx_o,
     output logic [3:0][COEFF_W-1:0]             hsu_wr_data_o,
@@ -90,22 +91,25 @@ module hash_sampler_unit #(
     output logic                                hsu_done_o,
 
     // ── Poly Memory Reader Input (MODE_ABSORB_POLY) ───────────────────────────
-    output logic                                hsu_rd_req_o,
     output logic [$clog2(NUM_POLYS)-1:0]        hsu_rd_poly_id_o,
     output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_rd_idx_o,
+    output logic [3:0]                          hsu_rd_lane_valid_o,
+    input  wire  [3:0]                          hsu_rd_lane_valid_i,
     input  wire  [3:0][COEFF_W-1:0]             hsu_rd_data_i,
     input  wire                                 hsu_rd_valid_i,
+    input  wire [$clog2(NUM_POLYS)-1:0]         hsu_rd_poly_id_i,
+    input  wire [3:0][$clog2(NCOEFF)-1:0]       hsu_rd_idx_i,
 
     // ── Seed Memory Port ──────────────────────────────────────────────────────
-    output logic                                seed_req_o,
-    output logic                                seed_we_o,
-    output seed_id_e                            seed_id_o,
-    output logic [$clog2(SEED_BEATS)-1:0]       seed_idx_o,
-    output logic [SEED_W-1:0]                   seed_wdata_o,
-    input  wire                                 seed_ready_i,
+    output logic                                hsu_seed_req_o,
+    output logic                                hsu_seed_we_o,
+    output seed_id_e                            hsu_seed_id_o,
+    output logic [$clog2(SEED_BEATS)-1:0]       hsu_seed_idx_o,
+    output logic [SEED_W-1:0]                   hsu_seed_wdata_o,
+    input  wire                                 hsu_seed_ready_i,
 
-    input  wire                                 seed_rvalid_i,
-    input  wire  [SEED_W-1:0]                   seed_rdata_i,
+    input  wire                                 hsu_seed_rvalid_i,
+    input  wire  [SEED_W-1:0]                   hsu_seed_rdata_i,
 
     // ── Raw AXI-Stream Input (direct Keccak feed) ─────────────────────────────
     input  wire  [SEED_W-1:0]                   axis_t_data_i,
@@ -195,7 +199,7 @@ module hash_sampler_unit #(
         end else begin
             if (start_i)
                 seed_rd_beat_cnt <= '0;
-            else if (input_sel_i == 2'b00 && seed_rvalid_i && keccak_t_ready_o)
+            else if (input_sel_i == 2'b00 && hsu_seed_rvalid_i && keccak_t_ready_o)
                 seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
         end
     end
@@ -217,7 +221,7 @@ module hash_sampler_unit #(
                 col_lat <= col_i;
                 coord_beat_pending <= 1'b0;
             end else if (hsu_mode_i == MODE_SAMPLE_NTT) begin
-                if (seed_beat_last && seed_rvalid_i && keccak_t_ready_o)
+                if (seed_beat_last && hsu_seed_rvalid_i && keccak_t_ready_o)
                     coord_beat_pending <= 1'b1;
                 else if (coord_beat_fire)
                     coord_beat_pending <= 1'b0;
@@ -344,8 +348,8 @@ module hash_sampler_unit #(
                     keccak_t_last_i  = 1'b1;             // Always last for matrix gen input
                     keccak_t_keep_i  = 8'h03;            // 2 valid bytes
                 end else begin
-                    keccak_t_data_i  = seed_rdata_i;
-                    keccak_t_valid_i = seed_rvalid_i;
+                    keccak_t_data_i  = hsu_seed_rdata_i;
+                    keccak_t_valid_i = hsu_seed_rvalid_i;
                     keccak_t_last_i  = seed_beat_last && absorb_last_i
                                        && (hsu_mode_i != MODE_SAMPLE_NTT); // Suppress for NTT — 5th beat handles it
                     keccak_t_keep_i  = 8'hFF;
@@ -455,7 +459,7 @@ module hash_sampler_unit #(
         end else begin
             if (start_i)
                 seed_wr_beat_cnt <= '0;
-            else if (seed_req_o && seed_ready_i)
+            else if (hsu_seed_req_o && hsu_seed_ready_i)
                 seed_wr_beat_cnt <= seed_wr_beat_cnt + 1;
         end
     end
@@ -471,18 +475,21 @@ module hash_sampler_unit #(
         keccak_t_ready_i     = 1'b0;
 
         hsu_req_o            = 1'b0;
-        hsu_poly_id_o        = poly_id_i;
+        hsu_rd_en_o          = 1'b0;
+        hsu_rd_lane_valid_o  = '0;
+        hsu_wr_poly_id_o     = poly_id_i;
         hsu_wr_en_o          = 4'b0;
         hsu_wr_idx_o         = '0;
         hsu_wr_data_o        = '0;
         hsu_done_o           = 1'b0;
 
-        seed_req_o           = 1'b0;
-        seed_we_o            = 1'b0;
-        seed_id_o            = seed_id_i;
-        seed_idx_o           = seed_wr_beat_cnt;
-        seed_wdata_o         = '0;
+        hsu_seed_req_o       = 1'b0;
+        hsu_seed_we_o        = 1'b0;
+        hsu_seed_id_o        = seed_id_i;
+        hsu_seed_idx_o       = seed_wr_beat_cnt;
+        hsu_seed_wdata_o     = '0;
 
+        hsu_rd_poly_id_o     = '0;
         hsu_rd_idx_o         = '0;
 
         axis_t_ready_o       = (input_sel_i == 2'b10) ? keccak_t_ready_o : 1'b0;
@@ -521,29 +528,31 @@ module hash_sampler_unit #(
 
                 if (hsu_mode_i == MODE_HASH_SHA3_512 && sha512_beat_cnt >= 3'd4) begin
                     // Beats 4-7: trap σ locally, do NOT write to Seed RAM
-                    seed_req_o       = 1'b0;
-                    seed_we_o        = 1'b0;
-                    seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i = 1'b1;   // Always accept (no backpressure needed)
+                    hsu_seed_req_o       = 1'b0;
+                    hsu_seed_we_o        = 1'b0;
+                    hsu_seed_wdata_o     = keccak_t_data_o;
+                    keccak_t_ready_i     = 1'b1;   // Always accept (no backpressure needed)
                 end else begin
-                    seed_req_o       = keccak_t_valid_o;
-                    seed_we_o        = 1'b1;
-                    seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i = seed_ready_i;
+                    hsu_seed_req_o       = keccak_t_valid_o;
+                    hsu_seed_we_o        = 1'b1;
+                    hsu_seed_wdata_o     = keccak_t_data_o;
+                    keccak_t_ready_i     = hsu_seed_ready_i;
                 end
             end
 
             MODE_ABSORB_POLY: begin
                 keccak_mode_sel  = SHA3_256;
                 // Poly reader driven by packer
-                hsu_rd_req_o     = packer_rd_req;
-                hsu_rd_poly_id_o = packer_rd_poly_id;
-                hsu_rd_idx_o     = packer_rd_idx;
+                hsu_req_o            = packer_rd_req;
+                hsu_rd_en_o          = packer_rd_req;
+                hsu_rd_lane_valid_o  = 4'b1111;
+                hsu_rd_poly_id_o     = packer_rd_poly_id;
+                hsu_rd_idx_o         = packer_rd_idx;
                 // Keccak output → Seed Memory (32B SHA3-256 digest)
-                seed_req_o       = keccak_t_valid_o;
-                seed_we_o        = 1'b1;
-                seed_wdata_o     = keccak_t_data_o;
-                keccak_t_ready_i = seed_ready_i;
+                hsu_seed_req_o       = keccak_t_valid_o;
+                hsu_seed_we_o        = 1'b1;
+                hsu_seed_wdata_o     = keccak_t_data_o;
+                keccak_t_ready_i     = hsu_seed_ready_i;
             end
 
         endcase
