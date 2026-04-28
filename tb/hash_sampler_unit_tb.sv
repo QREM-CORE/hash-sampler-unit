@@ -120,9 +120,10 @@ module hash_sampler_unit_tb();
     int          cfg_col;
     int          cfg_cbd_n;
     int          cfg_run_g_first;
+    int          cfg_seed_words;
 
     logic [SEED_W-1:0] input_mem    [128];
-    logic [COEFF_WIDTH-1:0] poly_mem     [NUM_POLYS][64];  // Up to NUM_POLYS, 64×4-coeff beats each
+    logic [SEED_W-1:0] poly_mem     [NUM_POLYS][64];  // 64x64-bit beats (4 coeffs each)
     logic [SEED_W-1:0] expected_mem [128];
     int          errors;
 
@@ -140,8 +141,8 @@ module hash_sampler_unit_tb();
                     automatic int p   = int'(hsu_rd_poly_id_o);
                     for (int lane = 0; lane < 4; lane++) begin
                         automatic int idx = int'(hsu_rd_idx_o[lane]);
-                        // poly_mem[p][idx/4] holds 4 coefficients; select by lane within beat
-                        hsu_rd_data_i[lane] <= poly_mem[p][idx >> 2];
+                        // Extract 12-bit coefficient from the 64-bit beat
+                        hsu_rd_data_i[lane] <= poly_mem[p][idx >> 2][(idx % 4)*12 +: 12];
                     end
                 end
                 hsu_rd_valid_i <= 1'b1;
@@ -220,10 +221,11 @@ module hash_sampler_unit_tb();
     // =========================================================
     // Drives the controller protocol for MODE_ABSORB_POLY.
     // Absorbs cfg_poly_cnt polys sequentially using absorb_poly_i handshake.
-    task automatic run_poly_absorb_sequence(input int n_polys);
+    task automatic run_poly_absorb_sequence(input int n_polys, input bit last_segment);
         for (int p = 0; p < n_polys; p++) begin
             poly_id_i     <= 4'(p);
-            absorb_last_i <= (p == n_polys - 1) ? 1'b1 : 1'b0;
+            // Only set absorb_last_i on the last poly IF no seed segments follow.
+            absorb_last_i <= (p == n_polys - 1 && last_segment) ? 1'b1 : 1'b0;
             absorb_poly_i <= 1'b1;
             @(posedge clk);
             absorb_poly_i <= 1'b0;
@@ -274,6 +276,7 @@ module hash_sampler_unit_tb();
             if (key == "COL")        cfg_col       = val;
             if (key == "CBD_N")      cfg_cbd_n     = val;
             if (key == "RUN_G_FIRST")cfg_run_g_first = val;
+            if (key == "SEED_WORDS") cfg_seed_words  = val;
         end
         $fclose(fd);
 
@@ -299,17 +302,11 @@ module hash_sampler_unit_tb();
                 $readmemh(input_file, raw_mem);
                 for (int p = 0; p < cfg_poly_cnt; p++) begin
                     for (int b = 0; b < 64; b++) begin
-                        // Store each beat as the packed 64-bit word;
-                        // serve_poly_memory will index by [poly][beat_idx]
-                        poly_mem[p][b] = raw_mem[p*64 + b][11:0];  // c0 only for indexing
+                        poly_mem[p][b] = raw_mem[p*64 + b];
                     end
                 end
-                // Re-load properly: store the full packed beat for each lane extraction
-                for (int p = 0; p < cfg_poly_cnt; p++) begin
-                    for (int b = 0; b < 64; b++) begin
-                        poly_mem[p][b] = raw_mem[p*64 + b][11:0];
-                    end
-                end
+                // Also load into input_mem for potential subsequent seed phase
+                for (int i = 0; i < 128; i++) input_mem[i] = raw_mem[i];
             end
 
             input_sel_i  = 1'b1;
@@ -323,8 +320,22 @@ module hash_sampler_unit_tb();
             fork
                 serve_poly_memory();
                 begin
-                    run_poly_absorb_sequence(cfg_poly_cnt);
-                    // Wait for Keccak to finish squeezing (monitored by seed write beats)
+                    run_poly_absorb_sequence(cfg_poly_cnt, (cfg_seed_words == 0));
+
+                    if (cfg_seed_words > 0) begin
+                        // Wait one cycle for packer to clear
+                        @(posedge clk);
+                        input_sel_i  <= 1'b0; // Switch to Seed Memory
+                        for (int i = 0; i < cfg_seed_words; i++) begin
+                            // Read from input_mem (which was loaded from input.hex after poly data)
+                            hsu_seed_rdata_i  <= input_mem[cfg_poly_cnt*64 + i];
+                            hsu_seed_rvalid_i <= 1'b1;
+                            absorb_last_i     <= (i == cfg_seed_words - 1) ? 1'b1 : 1'b0;
+                            do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                        end
+                        hsu_seed_rvalid_i <= 1'b0;
+                        absorb_last_i     <= 1'b0;
+                    end
                 end
                 monitor_output(cfg_out_chunks);
             join_any

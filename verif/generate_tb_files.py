@@ -73,10 +73,16 @@ def generate_files(json_file):
             coeff_beats = test.get('input_coeffs', [])
             in_words    = len(coeff_beats)
 
+            # Check for optional seed segment (Multi-Phase)
+            input_seed_hex = test.get('input_seed_hex', '')
+            seed_words     = (len(input_seed_hex) // 2 + 7) // 8
+            byte_list      = [input_seed_hex[i:i+2] for i in range(0, len(input_seed_hex), 2)]
+
             with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
                 f.write(f"MODE={hsu_mode_int}\n")
                 f.write(f"IS_ETA3=0\n")
                 f.write(f"IN_WORDS={in_words}\n")
+                f.write(f"SEED_WORDS={seed_words}\n")
                 f.write(f"OUT_CHUNKS={out_chunks}\n")
                 f.write(f"POLY_CNT={poly_cnt}\n")
                 f.write(f"ROW={row}\n")
@@ -85,12 +91,19 @@ def generate_files(json_file):
                 f.write(f"RUN_G_FIRST={run_g_first}\n")
 
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
+                # 1. Poly coefficients
                 for beat in coeff_beats:
                     # beat = [c0, c1, c2, c3]
                     packed = 0
                     for j, c in enumerate(beat):
                         packed |= (int(c) & 0xFFF) << (12 * j)
                     f.write(f"{packed:016X}\n")
+                # 2. Seed data (if any)
+                for i in range(0, len(byte_list), 8):
+                    chunk = byte_list[i:i+8]
+                    while len(chunk) < 8: chunk.append('00')
+                    chunk.reverse()
+                    f.write("".join(chunk) + "\n")
 
         else:
             # Seed/hash modes: AXI byte-aligned LE words
@@ -110,7 +123,7 @@ def generate_files(json_file):
                 f.write(f"CBD_N={cbd_n}\n")
                 f.write(f"RUN_G_FIRST={run_g_first}\n")
                 sigma_expected = test.get('sigma_expected', '')
-            
+
             if sigma_expected:
                 with open(os.path.join(test_dir, 'sigma.hex'), 'w') as sf:
                     sf.write(f"{sigma_expected}\n")
