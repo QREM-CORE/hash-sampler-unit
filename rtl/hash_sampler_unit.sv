@@ -63,6 +63,9 @@ module hash_sampler_unit #(
     input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,
     input  wire                                 is_eta3_i,
 
+    // Sticky done signal: set on completion and cleared by start_i
+    output logic                                hsu_done_o,
+
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
     input  wire seed_id_e                       seed_id_i,
     input  wire [7:0]                           row_i,
@@ -88,7 +91,6 @@ module hash_sampler_unit #(
     output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_wr_idx_o,
     output logic [3:0][COEFF_W-1:0]             hsu_wr_data_o,
     input  wire                                 hsu_stall_i,
-    output logic                                hsu_done_o,
 
     // ── Poly Memory Reader Input (MODE_ABSORB_POLY) ───────────────────────────
     output logic [$clog2(NUM_POLYS)-1:0]        hsu_rd_poly_id_o,

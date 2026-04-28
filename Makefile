@@ -51,6 +51,6 @@ else
 		test_name=$$(basename "$${dir%/}"); \
 		echo ""; \
 		echo "--- Running ModelSim on $$test_name ---"; \
-		vsim -c -do "run -all; quit" work.hash_sampler_unit_tb +TEST_DIR=$$dir -l hash_sampler_unit_tb_$$test_name.log; \
+		vsim -c -do "vcd file hash_sampler_unit_tb_$$test_name.vcd; vcd add -r /hash_sampler_unit_tb/*; run -all; quit" work.hash_sampler_unit_tb +TEST_DIR=$$dir -l hash_sampler_unit_tb_$$test_name.log; \
 	done
 endif
