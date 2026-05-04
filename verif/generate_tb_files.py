@@ -59,6 +59,7 @@ def generate_files(json_file):
         col          = config.get('COL', 0)
         cbd_n        = config.get('CBD_N', 0)
         run_g_first  = config.get('RUN_G_FIRST', 0)
+        input_sel    = config.get('INPUT_SEL', 0)
         out_chunks   = len(test['output_beats'])
 
         # ── Generate expected.hex ──────────────────────────────────────────
@@ -79,16 +80,16 @@ def generate_files(json_file):
             byte_list      = [input_seed_hex[i:i+2] for i in range(0, len(input_seed_hex), 2)]
 
             with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
-                f.write(f"MODE={hsu_mode_int}\n")
-                f.write(f"IS_ETA3=0\n")
-                f.write(f"IN_WORDS={in_words}\n")
-                f.write(f"SEED_WORDS={seed_words}\n")
-                f.write(f"OUT_CHUNKS={out_chunks}\n")
-                f.write(f"POLY_CNT={poly_cnt}\n")
-                f.write(f"ROW={row}\n")
-                f.write(f"COL={col}\n")
-                f.write(f"CBD_N={cbd_n}\n")
-                f.write(f"RUN_G_FIRST={run_g_first}\n")
+                f.write(f"MODE {hsu_mode_int}\n")
+                f.write(f"IS_ETA3 0\n")
+                f.write(f"IN_WORDS {in_words}\n")
+                f.write(f"SEED_WORDS {seed_words}\n")
+                f.write(f"OUT_CHUNKS {out_chunks}\n")
+                f.write(f"POLY_CNT {poly_cnt}\n")
+                f.write(f"ROW {row}\n")
+                f.write(f"COL {col}\n")
+                f.write(f"CBD_N {cbd_n}\n")
+                f.write(f"RUN_G_FIRST {run_g_first}\n")
 
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
                 # 1. Poly coefficients
@@ -113,15 +114,16 @@ def generate_files(json_file):
             in_words  = (in_bytes + 7) // 8
 
             with open(os.path.join(test_dir, 'config.txt'), 'w') as f:
-                f.write(f"MODE={hsu_mode_int}\n")
-                f.write(f"IS_ETA3={is_eta3}\n")
-                f.write(f"IN_WORDS={in_words}\n")
-                f.write(f"OUT_CHUNKS={out_chunks}\n")
-                f.write(f"POLY_CNT=1\n")
-                f.write(f"ROW={row}\n")
-                f.write(f"COL={col}\n")
-                f.write(f"CBD_N={cbd_n}\n")
-                f.write(f"RUN_G_FIRST={run_g_first}\n")
+                f.write(f"MODE {hsu_mode_int}\n")
+                f.write(f"IS_ETA3 {is_eta3}\n")
+                f.write(f"IN_WORDS {in_words}\n")
+                f.write(f"OUT_CHUNKS {out_chunks}\n")
+                f.write(f"POLY_CNT 1\n")
+                f.write(f"ROW {row}\n")
+                f.write(f"COL {col}\n")
+                f.write(f"CBD_N {cbd_n}\n")
+                f.write(f"RUN_G_FIRST {run_g_first}\n")
+                f.write(f"INPUT_SEL {input_sel}\n")
                 sigma_expected = test.get('sigma_expected', '')
 
             if sigma_expected:

@@ -129,6 +129,7 @@ module hash_sampler_unit_tb();
     logic [255:0] expected_sigma_val;
 
     int          cfg_mode;
+    int          cfg_input_sel;
     int          cfg_is_eta3;
     int          cfg_in_words;
     int          cfg_out_chunks;
@@ -295,6 +296,7 @@ module hash_sampler_unit_tb();
 
         // Parse config.txt
         cfg_poly_cnt = 1;
+        cfg_input_sel = 0;
         cfg_row = 0;
         cfg_col = 0;
         cfg_cbd_n = 0;
@@ -302,8 +304,9 @@ module hash_sampler_unit_tb();
         fd = $fopen(config_file, "r");
         if (!fd) $fatal(1, "Could not open %s", config_file);
         while (!$feof(fd)) begin
-            scan_rtn = $fscanf(fd, "%s=%d\n", key, val);
+            scan_rtn = $fscanf(fd, "%s %d\n", key, val);
             if (key == "MODE")       cfg_mode      = val;
+            if (key == "INPUT_SEL")  cfg_input_sel = val;
             if (key == "IS_ETA3")    cfg_is_eta3   = val;
             if (key == "IN_WORDS")   cfg_in_words  = val;
             if (key == "OUT_CHUNKS") cfg_out_chunks = val;
@@ -382,7 +385,7 @@ module hash_sampler_unit_tb();
         end else begin
             // ── Seed memory feed modes (NTT, CBD, hash bypass) ────────
             $readmemh(input_file, input_mem);
-            input_sel_i  = 1'b0;
+            input_sel_i  = (cfg_input_sel == 2) ? 2'b10 : 2'b00;
             // hsu_seed_ready_i driven by monitor always_ff once armed
             absorb_last_i = 1'b1;  // Single segment — always last
 
@@ -395,12 +398,25 @@ module hash_sampler_unit_tb();
 
                 // Send 4 beats of bypass input
                 for (int i = 0; i < 4; i++) begin
-                    hsu_seed_rdata_i  <= input_mem[i];
-                    hsu_seed_rvalid_i <= 1'b1;
-                    do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                    if (cfg_input_sel == 2) begin
+                        axis_t_data_i  <= input_mem[i];
+                        axis_t_valid_i <= 1'b1;
+                        axis_t_last_i  <= (i == 3) ? 1'b1 : 1'b0;
+                        axis_t_keep_i  <= 8'hFF;
+                        do @(posedge clk); while (!axis_t_ready_o);
+                    end else begin
+                        hsu_seed_rdata_i  <= input_mem[i];
+                        hsu_seed_rvalid_i <= 1'b1;
+                        do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                    end
                 end
-                hsu_seed_rvalid_i <= 1'b0;
-                hsu_seed_rdata_i  <= '0;
+                if (cfg_input_sel == 2) begin
+                    axis_t_valid_i <= 1'b0;
+                    axis_t_last_i  <= 1'b0;
+                end else begin
+                    hsu_seed_rvalid_i <= 1'b0;
+                    hsu_seed_rdata_i  <= '0;
+                end
 
                 wait (DUT.sigma_valid == 1'b1);
                 $display("sigma_reg captured: %x", DUT.sigma_reg);
@@ -424,6 +440,7 @@ module hash_sampler_unit_tb();
                 $display("Now running target test...");
             end
 
+            hsu_rd_idx_i[0] = cfg_cbd_n; // Inject CBD_N for RTL sampling
             start_i = 1'b1;
             @(posedge clk);
             start_i = 1'b0;
@@ -434,12 +451,25 @@ module hash_sampler_unit_tb();
 
             // Drive seed input (sequential)
             for (int i = 0; i < cfg_in_words; i++) begin
-                hsu_seed_rdata_i  <= input_mem[i];
-                hsu_seed_rvalid_i <= 1'b1;
-                do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
+                if (cfg_input_sel == 2) begin
+                    axis_t_data_i  <= input_mem[i];
+                    axis_t_valid_i <= 1'b1;
+                    axis_t_last_i  <= (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
+                    axis_t_keep_i  <= 8'hFF;
+                    do @(posedge clk); while (!axis_t_ready_o); // Backpressure aware
+                end else begin
+                    hsu_seed_rdata_i  <= input_mem[i];
+                    hsu_seed_rvalid_i <= 1'b1;
+                    do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
+                end
             end
-            hsu_seed_rvalid_i <= 1'b0;
-            hsu_seed_rdata_i  <= '0;
+            if (cfg_input_sel == 2) begin
+                axis_t_valid_i <= 1'b0;
+                axis_t_last_i  <= 1'b0;
+            end else begin
+                hsu_seed_rvalid_i <= 1'b0;
+                hsu_seed_rdata_i  <= '0;
+            end
 
             // Wait for monitor to drain all output
             wait (monitor_done);
