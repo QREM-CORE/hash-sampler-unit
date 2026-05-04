@@ -236,6 +236,24 @@ module hash_sampler_unit_tb();
     end
 
     // =========================================================
+    // 6a. Watchdog Timer
+    // =========================================================
+    localparam int WATCHDOG_MAX = 100000;
+    int watchdog_cnt = 0;
+
+    always_ff @(posedge clk) begin
+        if (rst || !monitor_active) begin
+            watchdog_cnt <= 0;
+        end else if (monitor_active && !monitor_done) begin
+            watchdog_cnt <= watchdog_cnt + 1;
+            if (watchdog_cnt >= WATCHDOG_MAX) begin
+                $error("[FAIL] Watchdog timeout after %0d cycles in test: %s!", WATCHDOG_MAX, test_dir);
+                $fatal(1, "Simulation Hang Detected");
+            end
+        end
+    end
+
+    // =========================================================
     // 7. Poly Absorb Sequence Task
     // =========================================================
     // Drives the controller protocol for MODE_ABSORB_POLY.
