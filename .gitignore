@@ -10,3 +10,4 @@ verif/.venv/
 obj_dir/
 test_vectors.json
 test_vectors/*
+*.gtkw
