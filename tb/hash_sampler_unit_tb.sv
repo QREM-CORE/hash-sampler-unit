@@ -172,36 +172,55 @@ module hash_sampler_unit_tb();
         end
     end
 
-    // =========================================================
-    // 6. Monitor (Reactive)
-    // =========================================================
-    always_ff @(posedge clk) begin
+    logic force_seed_ready = 1'b0;
+
+    // ==========================================================
+    // Monitor / Data Checker Logic
+    // ==========================================================
+    int watchdog_timer = 0;
+    always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
+            hsu_seed_ready_i <= 1'b0;
+            hsu_stall_i      <= 1'b0;
             monitor_done     <= 1'b0;
-            hsu_stall_i      <= 1'b0;
-            hsu_seed_ready_i <= 1'b0;
-        end else if (!monitor_active) begin
-            monitor_done     <= 1'b0;
-            hsu_stall_i      <= 1'b0;
-            hsu_seed_ready_i <= 1'b0;
-        end else if (monitor_beat_idx >= monitor_n_chunks) begin
-            hsu_stall_i      <= 1'b0;
-            hsu_seed_ready_i <= 1'b0;
-            monitor_done     <= 1'b1;
+            monitor_beat_idx <= '0;
+            watchdog_timer   <= '0;
+            monitor_err_count <= 0;
         end else begin
-            // Random backpressure
-            hsu_stall_i      <= ($urandom_range(0,99) < 20) ? 1'b1 : 1'b0;
-            hsu_seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
+            if (monitor_active) begin
+                if (monitor_beat_idx >= monitor_n_chunks) begin
+                    monitor_done     <= 1'b1;
+                    hsu_seed_ready_i <= 1'b0;
+                    hsu_stall_i      <= 1'b0;
+                end else begin
+                    monitor_done     <= 1'b0;
+                    watchdog_timer   <= watchdog_timer + 1;
+                    if (watchdog_timer > 100000) begin
+                        $error("[FAIL] Watchdog timeout after 100000 cycles in test: %s!", test_dir);
+                        $stop;
+                    end
+                    hsu_seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
+                    hsu_stall_i      <= ($urandom_range(0,99) < 20) ? 1'b1 : 1'b0;
+                end
+            end else begin
+                monitor_done <= 1'b0;
+                hsu_stall_i  <= 1'b0;
+                if (force_seed_ready) begin
+                    hsu_seed_ready_i <= 1'b1;
+                end else begin
+                    hsu_seed_ready_i <= 1'b0;
+                end
+            end
 
             if (cfg_mode == int'(MODE_SAMPLE_NTT) || cfg_mode == int'(MODE_SAMPLE_CBD)) begin
                 if (hsu_req_o && !hsu_stall_i) begin
                     if (hsu_wr_en_o === 4'b0000) begin
                         $error("[FAIL] Poly write transaction valid but hsu_wr_en_o is 0!");
-                        monitor_err_count++;
+                         monitor_err_count <= monitor_err_count + 1;
                     end
                     if (hsu_wr_idx_o[0] !== monitor_expected_idx[$clog2(NCOEFF)-1:0]) begin
                          $error("[FAIL] Poly write index mismatch! Expected: %0d | Got: %0d", monitor_expected_idx[$clog2(NCOEFF)-1:0], hsu_wr_idx_o[0]);
-                         monitor_err_count++;
+                          monitor_err_count <= monitor_err_count + 1;
                     end
                     if (hsu_wr_data_o !== {expected_mem[monitor_beat_idx][3*12 +: 12],
                                            expected_mem[monitor_beat_idx][2*12 +: 12],
@@ -209,28 +228,28 @@ module hash_sampler_unit_tb();
                                            expected_mem[monitor_beat_idx][0*12 +: 12]}) begin
                         $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X",
                                monitor_beat_idx, expected_mem[monitor_beat_idx], hsu_wr_data_o);
-                        monitor_err_count++;
+                         monitor_err_count <= monitor_err_count + 1;
                     end
-                    monitor_beat_idx++;
-                    monitor_expected_idx += 4;
+                    monitor_beat_idx <= monitor_beat_idx + 1;
+                    monitor_expected_idx <= monitor_expected_idx + 4;
                 end
             end else begin
                 if (hsu_seed_req_o && hsu_seed_ready_i) begin
                     if (hsu_seed_we_o !== 1'b1) begin
                         $error("[FAIL] Seed write transaction valid but hsu_seed_we_o is 0!");
-                        monitor_err_count++;
+                         monitor_err_count <= monitor_err_count + 1;
                     end
                     if (hsu_seed_idx_o !== monitor_expected_idx[$clog2(SEED_BEATS)-1:0]) begin
                          $error("[FAIL] Seed write index mismatch! Expected: %0d | Got: %0d", monitor_expected_idx[$clog2(SEED_BEATS)-1:0], hsu_seed_idx_o);
-                         monitor_err_count++;
+                          monitor_err_count <= monitor_err_count + 1;
                     end
                     if (hsu_seed_wdata_o !== expected_mem[monitor_beat_idx]) begin
                         $error("[FAIL] Beat %0d | Expected: %16X | Got: %16X",
                                monitor_beat_idx, expected_mem[monitor_beat_idx], hsu_seed_wdata_o);
-                        monitor_err_count++;
+                         monitor_err_count <= monitor_err_count + 1;
                     end
-                    monitor_beat_idx++;
-                    monitor_expected_idx += 1;
+                    monitor_beat_idx <= monitor_beat_idx + 1;
+                    monitor_expected_idx <= monitor_expected_idx + 1;
                 end
             end
         end
@@ -261,12 +280,12 @@ module hash_sampler_unit_tb();
     // Absorbs cfg_poly_cnt polys sequentially using absorb_poly_i handshake.
     task automatic run_poly_absorb_sequence(input int n_polys, input bit last_segment);
         for (int p = 0; p < n_polys; p++) begin
-            poly_id_i     <= 4'(p);
+            poly_id_i     = 4'(p);
             // Only set absorb_last_i on the last poly IF no seed segments follow.
-            absorb_last_i <= (p == n_polys - 1 && last_segment) ? 1'b1 : 1'b0;
-            absorb_poly_i <= 1'b1;
+            absorb_last_i = (p == n_polys - 1 && last_segment) ? 1'b1 : 1'b0;
+            absorb_poly_i = 1'b1;
             @(posedge clk);
-            absorb_poly_i <= 1'b0;
+            absorb_poly_i = 1'b0;
 
             // Wait for packer to finish draining gearbox
             @(posedge clk);
@@ -366,16 +385,16 @@ module hash_sampler_unit_tb();
             if (cfg_seed_words > 0) begin
                 // Wait one cycle for packer to clear
                 @(posedge clk);
-                input_sel_i  <= 1'b0; // Switch to Seed Memory
+                input_sel_i  = 1'b0; // Switch to Seed Memory
                 for (int i = 0; i < cfg_seed_words; i++) begin
                     // Read from input_mem (which was loaded from input.hex after poly data)
-                    hsu_seed_rdata_i  <= input_mem[cfg_poly_cnt*64 + i];
-                    hsu_seed_rvalid_i <= 1'b1;
-                    absorb_last_i     <= (i == cfg_seed_words - 1) ? 1'b1 : 1'b0;
+                    hsu_seed_rdata_i  = input_mem[cfg_poly_cnt*64 + i];
+                    hsu_seed_rvalid_i = 1'b1;
+                    absorb_last_i     = (i == cfg_seed_words - 1) ? 1'b1 : 1'b0;
                     do @(posedge clk); while (!DUT.keccak_t_ready_o);
                 end
-                hsu_seed_rvalid_i <= 1'b0;
-                absorb_last_i     <= 1'b0;
+                hsu_seed_rvalid_i = 1'b0;
+                absorb_last_i     = 1'b0;
             end
 
             // Wait for monitor to drain all output
@@ -385,9 +404,10 @@ module hash_sampler_unit_tb();
         end else begin
             // ── Seed memory feed modes (NTT, CBD, hash bypass) ────────
             $readmemh(input_file, input_mem);
+            $display("DEBUG: input_mem[0] = %x", input_mem[0]);
             input_sel_i  = (cfg_input_sel == 2) ? 2'b10 : 2'b00;
             // hsu_seed_ready_i driven by monitor always_ff once armed
-            absorb_last_i = 1'b1;  // Single segment — always last
+            // absorb_last_i set inside the loop
 
             if (cfg_run_g_first) begin
                 $display("Running SHA3-512 Regression first to load sigma_reg...");
@@ -396,26 +416,31 @@ module hash_sampler_unit_tb();
                 @(posedge clk);
                 start_i = 1'b0;
 
+                // Enable Keccak output so sigma_reg can load
+                force_seed_ready = 1'b1;
+
                 // Send 4 beats of bypass input
                 for (int i = 0; i < 4; i++) begin
                     if (cfg_input_sel == 2) begin
-                        axis_t_data_i  <= input_mem[i];
-                        axis_t_valid_i <= 1'b1;
-                        axis_t_last_i  <= (i == 3) ? 1'b1 : 1'b0;
-                        axis_t_keep_i  <= 8'hFF;
+                        axis_t_data_i  = input_mem[i];
+                        axis_t_valid_i = 1'b1;
+                        axis_t_last_i  = (i == 3) ? 1'b1 : 1'b0;
+                        axis_t_keep_i  = 8'hFF;
                         do @(posedge clk); while (!axis_t_ready_o);
                     end else begin
-                        hsu_seed_rdata_i  <= input_mem[i];
-                        hsu_seed_rvalid_i <= 1'b1;
+                        absorb_last_i     = (i == 3) ? 1'b1 : 1'b0;
+                        hsu_seed_rdata_i  = input_mem[i];
+                        hsu_seed_rvalid_i = 1'b1;
                         do @(posedge clk); while (!DUT.keccak_t_ready_o);
                     end
                 end
                 if (cfg_input_sel == 2) begin
-                    axis_t_valid_i <= 1'b0;
-                    axis_t_last_i  <= 1'b0;
+                    axis_t_valid_i = 1'b0;
+                    axis_t_last_i  = 1'b0;
                 end else begin
-                    hsu_seed_rvalid_i <= 1'b0;
-                    hsu_seed_rdata_i  <= '0;
+                    absorb_last_i     = 1'b0;
+                    hsu_seed_rvalid_i = 1'b0;
+                    hsu_seed_rdata_i  = '0;
                 end
 
                 wait (DUT.sigma_valid == 1'b1);
@@ -429,10 +454,12 @@ module hash_sampler_unit_tb();
                     if (DUT.sigma_reg !== expected_sigma_val) begin
                         $error("[FAIL] sigma_reg mismatch!\n       Expected: %x\n       Got:      %x", expected_sigma_val, DUT.sigma_reg);
                         init_err_count++;
-                    end else begin
-                        $display("[PASS] sigma_reg matches expected value.");
                     end
                 end
+
+                // Disable hsu_seed_ready_i before moving to main test
+                force_seed_ready = 1'b0;
+                $display("[PASS] sigma_reg matches expected value.");
 
                 @(posedge clk);
 
@@ -452,23 +479,25 @@ module hash_sampler_unit_tb();
             // Drive seed input (sequential)
             for (int i = 0; i < cfg_in_words; i++) begin
                 if (cfg_input_sel == 2) begin
-                    axis_t_data_i  <= input_mem[i];
-                    axis_t_valid_i <= 1'b1;
-                    axis_t_last_i  <= (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
-                    axis_t_keep_i  <= 8'hFF;
+                    axis_t_data_i  = input_mem[i];
+                    axis_t_valid_i = 1'b1;
+                    axis_t_last_i  = (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
+                    axis_t_keep_i  = 8'hFF;
                     do @(posedge clk); while (!axis_t_ready_o); // Backpressure aware
                 end else begin
-                    hsu_seed_rdata_i  <= input_mem[i];
-                    hsu_seed_rvalid_i <= 1'b1;
+                    absorb_last_i     = (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
+                    hsu_seed_rdata_i  = input_mem[i];
+                    hsu_seed_rvalid_i = 1'b1;
                     do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
                 end
             end
             if (cfg_input_sel == 2) begin
-                axis_t_valid_i <= 1'b0;
-                axis_t_last_i  <= 1'b0;
+                axis_t_valid_i = 1'b0;
+                axis_t_last_i  = 1'b0;
             end else begin
-                hsu_seed_rvalid_i <= 1'b0;
-                hsu_seed_rdata_i  <= '0;
+                absorb_last_i     = 1'b0;
+                hsu_seed_rvalid_i = 1'b0;
+                hsu_seed_rdata_i  = '0;
             end
 
             // Wait for monitor to drain all output

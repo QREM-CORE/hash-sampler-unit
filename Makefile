@@ -37,6 +37,7 @@ ifeq ($(SIM), verilator)
 	@# We use shell wildcard here so it evaluates AFTER the Python script creates the folders
 	@for dir in verif/test_vectors/*/; do \
 		test_name=$$(basename "$${dir%/}"); \
+		if [ -n "$(TEST)" ] && ! echo "$$test_name" | grep -q "$(TEST)"; then continue; fi; \
 		echo ""; \
 		echo "--- Running Verilator on $$test_name ---"; \
 		./obj_dir/Vhash_sampler_unit_tb +TEST_DIR=$$dir 2>&1 | tee hash_sampler_unit_tb_$$test_name.log; \
@@ -49,6 +50,7 @@ else
 	@# We use shell wildcard here so it evaluates AFTER the Python script creates the folders
 	@for dir in verif/test_vectors/*/; do \
 		test_name=$$(basename "$${dir%/}"); \
+		if [ -n "$(TEST)" ] && ! echo "$$test_name" | grep -q "$(TEST)"; then continue; fi; \
 		echo ""; \
 		echo "--- Running ModelSim on $$test_name ---"; \
 		vsim -c -do "vcd file hash_sampler_unit_tb_$$test_name.vcd; vcd add -r /hash_sampler_unit_tb/*; run -all; quit" work.hash_sampler_unit_tb +TEST_DIR=$$dir -l hash_sampler_unit_tb_$$test_name.log; \
