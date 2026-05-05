@@ -11,3 +11,4 @@ obj_dir/
 test_vectors.json
 test_vectors/*
 *.gtkw
+hsu_implementation_plans/*

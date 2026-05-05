@@ -454,12 +454,13 @@ module hash_sampler_unit_tb();
                     if (DUT.sigma_reg !== expected_sigma_val) begin
                         $error("[FAIL] sigma_reg mismatch!\n       Expected: %x\n       Got:      %x", expected_sigma_val, DUT.sigma_reg);
                         init_err_count++;
+                    end else begin
+                        $display("[PASS] sigma_reg matches expected value.");
                     end
                 end
 
                 // Disable hsu_seed_ready_i before moving to main test
                 force_seed_ready = 1'b0;
-                $display("[PASS] sigma_reg matches expected value.");
 
                 @(posedge clk);
 

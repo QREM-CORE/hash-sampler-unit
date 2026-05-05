@@ -549,18 +549,10 @@ module hash_sampler_unit #(
                 else if (hsu_mode_i == MODE_HASH_SHA3_512) keccak_mode_sel = SHA3_512;
                 else                                        keccak_mode_sel = SHAKE256;
 
-                if (hsu_mode_i == MODE_HASH_SHA3_512 && sha512_beat_cnt >= 3'd4) begin
-                    // Beats 4-7: trap σ locally, do NOT write to Seed RAM
-                    hsu_seed_req_o       = 1'b0;
-                    hsu_seed_we_o        = 1'b0;
-                    hsu_seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i     = 1'b1;   // Always accept (no backpressure needed)
-                end else begin
-                    hsu_seed_req_o       = keccak_t_valid_o;
-                    hsu_seed_we_o        = 1'b1;
-                    hsu_seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i     = hsu_seed_ready_i;
-                end
+                hsu_seed_req_o       = keccak_t_valid_o;
+                hsu_seed_we_o        = 1'b1;
+                hsu_seed_wdata_o     = keccak_t_data_o;
+                keccak_t_ready_i     = hsu_seed_ready_i;
             end
 
             MODE_ABSORB_POLY: begin
