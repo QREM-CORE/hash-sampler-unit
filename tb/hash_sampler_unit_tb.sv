@@ -139,6 +139,7 @@ module hash_sampler_unit_tb();
     int          cfg_cbd_n;
     int          cfg_run_g_first;
     int          cfg_seed_words;
+    int          cfg_xof_len;
 
     logic [SEED_W-1:0] input_mem    [128];
     logic [SEED_W-1:0] poly_mem     [NUM_POLYS][64];  // 64x64-bit beats (4 coeffs each)
@@ -320,6 +321,7 @@ module hash_sampler_unit_tb();
         cfg_col = 0;
         cfg_cbd_n = 0;
         cfg_run_g_first = 0;
+        cfg_xof_len = 0;
         fd = $fopen(config_file, "r");
         if (!fd) $fatal(1, "Could not open %s", config_file);
         while (!$feof(fd)) begin
@@ -335,6 +337,7 @@ module hash_sampler_unit_tb();
             if (key == "CBD_N")      cfg_cbd_n     = val;
             if (key == "RUN_G_FIRST")cfg_run_g_first = val;
             if (key == "SEED_WORDS") cfg_seed_words  = val;
+            if (key == "XOF_LEN")    cfg_xof_len     = val;
         end
         $fclose(fd);
 
@@ -346,7 +349,7 @@ module hash_sampler_unit_tb();
 
         hsu_mode_i  = hs_mode_t'(cfg_mode);
         is_eta3_i   = cfg_is_eta3[0];
-        xof_len_i   = '0;
+        xof_len_i   = cfg_xof_len[XOF_LEN_WIDTH-1:0];
         row_i       = cfg_row[7:0];
         col_i       = cfg_col[7:0];
         cbd_n_i     = cfg_cbd_n[7:0];

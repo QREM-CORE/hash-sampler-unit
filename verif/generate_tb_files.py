@@ -60,6 +60,7 @@ def generate_files(json_file):
         cbd_n        = config.get('CBD_N', 0)
         run_g_first  = config.get('RUN_G_FIRST', 0)
         input_sel    = config.get('INPUT_SEL', 0)
+        xof_len      = config.get('XOF_LEN', 0)
         out_chunks   = len(test['output_beats'])
 
         # ── Generate expected.hex ──────────────────────────────────────────
@@ -90,6 +91,7 @@ def generate_files(json_file):
                 f.write(f"COL {col}\n")
                 f.write(f"CBD_N {cbd_n}\n")
                 f.write(f"RUN_G_FIRST {run_g_first}\n")
+                f.write(f"XOF_LEN {xof_len}\n")
 
             with open(os.path.join(test_dir, 'input.hex'), 'w') as f:
                 # 1. Poly coefficients
@@ -124,6 +126,7 @@ def generate_files(json_file):
                 f.write(f"CBD_N {cbd_n}\n")
                 f.write(f"RUN_G_FIRST {run_g_first}\n")
                 f.write(f"INPUT_SEL {input_sel}\n")
+                f.write(f"XOF_LEN {xof_len}\n")
                 sigma_expected = test.get('sigma_expected', '')
 
             if sigma_expected:
