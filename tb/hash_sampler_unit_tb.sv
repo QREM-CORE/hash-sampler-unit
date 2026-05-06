@@ -195,11 +195,6 @@ module hash_sampler_unit_tb();
                     hsu_stall_i      <= 1'b0;
                 end else begin
                     monitor_done     <= 1'b0;
-                    watchdog_timer   <= watchdog_timer + 1;
-                    if (watchdog_timer > 100000) begin
-                        $error("[FAIL] Watchdog timeout after 100000 cycles in test: %s!", test_dir);
-                        $stop;
-                    end
                     hsu_seed_ready_i <= ($urandom_range(0,99) < 80) ? 1'b1 : 1'b0;
                     hsu_stall_i      <= ($urandom_range(0,99) < 20) ? 1'b1 : 1'b0;
                 end
@@ -263,9 +258,9 @@ module hash_sampler_unit_tb();
     int watchdog_cnt = 0;
 
     always_ff @(posedge clk) begin
-        if (rst || !monitor_active) begin
+        if (rst) begin
             watchdog_cnt <= 0;
-        end else if (monitor_active && !monitor_done) begin
+        end else if (!monitor_done) begin
             watchdog_cnt <= watchdog_cnt + 1;
             if (watchdog_cnt >= WATCHDOG_MAX) begin
                 $error("[FAIL] Watchdog timeout after %0d cycles in test: %s!", WATCHDOG_MAX, test_dir);
@@ -391,17 +386,17 @@ module hash_sampler_unit_tb();
                 input_sel_i  = 1'b0; // Switch to Seed Memory
                 for (int i = 0; i < cfg_seed_words; i++) begin
                     // Read from input_mem (which was loaded from input.hex after poly data)
-                    hsu_seed_rdata_i  = input_mem[cfg_poly_cnt*64 + i];
                     hsu_seed_rvalid_i = 1'b1;
                     absorb_last_i     = (i == cfg_seed_words - 1) ? 1'b1 : 1'b0;
-                    do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                    wait (DUT.keccak_t_ready_o);
+                    @(posedge clk);
                 end
                 hsu_seed_rvalid_i = 1'b0;
                 absorb_last_i     = 1'b0;
             end
 
             // Wait for monitor to drain all output
-            wait (monitor_done);
+            while (!monitor_done) @(posedge clk);
             monitor_active = 1'b0;
 
         end else begin
@@ -429,12 +424,14 @@ module hash_sampler_unit_tb();
                         axis_t_valid_i = 1'b1;
                         axis_t_last_i  = (i == 3) ? 1'b1 : 1'b0;
                         axis_t_keep_i  = 8'hFF;
-                        do @(posedge clk); while (!axis_t_ready_o);
+                        wait (axis_t_ready_o);
+                        @(posedge clk);
                     end else begin
                         absorb_last_i     = (i == 3) ? 1'b1 : 1'b0;
                         hsu_seed_rdata_i  = input_mem[i];
                         hsu_seed_rvalid_i = 1'b1;
-                        do @(posedge clk); while (!DUT.keccak_t_ready_o);
+                        wait (DUT.keccak_t_ready_o);
+                        @(posedge clk);
                     end
                 end
                 if (cfg_input_sel == 2) begin
@@ -487,12 +484,14 @@ module hash_sampler_unit_tb();
                     axis_t_valid_i = 1'b1;
                     axis_t_last_i  = (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
                     axis_t_keep_i  = 8'hFF;
-                    do @(posedge clk); while (!axis_t_ready_o); // Backpressure aware
+                    wait (axis_t_ready_o);
+                    @(posedge clk); // Backpressure aware
                 end else begin
                     absorb_last_i     = (i == cfg_in_words - 1) ? 1'b1 : 1'b0;
                     hsu_seed_rdata_i  = input_mem[i];
                     hsu_seed_rvalid_i = 1'b1;
-                    do @(posedge clk); while (!DUT.keccak_t_ready_o); // Backpressure aware
+                    wait (DUT.keccak_t_ready_o);
+                    @(posedge clk); // Backpressure aware
                 end
             end
             if (cfg_input_sel == 2) begin
@@ -505,7 +504,7 @@ module hash_sampler_unit_tb();
             end
 
             // Wait for monitor to drain all output
-            wait (monitor_done);
+            while (!monitor_done) @(posedge clk);
             monitor_active = 1'b0;
 
             // We removed the wait(hsu_done_o) because it can race with monitor exits and hang.
