@@ -99,6 +99,7 @@ module coeff_to_axis_packer #(
     // Latched config
     logic [$clog2(NUM_POLYS)-1:0]   cur_poly_id;
     logic                           is_last_lat; // Latched copy of is_last_i
+    logic                           rd_pending_q;
 
     // =========================================================================
     // 3. COMBINATIONAL NEXT-STATE
@@ -164,23 +165,24 @@ module coeff_to_axis_packer #(
                     end
                 end
 
-                // ── Issue read request if buffer can accept 6 more bytes ──
-                if (coeff_idx <= $clog2(NCOEFF)'(LAST_IDX_VAL) && (fill_nxt <= 4'd6)) begin
-                    rd_req_o = 1'b1;
+                // ── Process incoming read valid ──
+                if (rd_valid_i) begin
+                    // Push 48 bits into buffer at current fill position
+                    buf_nxt  = buf_nxt | (BUF_W'(coeff_packed) << {fill_nxt, 3'b000});
+                    fill_nxt = fill_nxt + 4'd6;
 
-                    if (rd_valid_i) begin
-                        // Push 48 bits into buffer at current fill position
-                        buf_nxt  = buf_nxt | (BUF_W'(coeff_packed) << {fill_nxt, 3'b000});
-                        fill_nxt = fill_nxt + 4'd6;
-
-                        if (all_coeffs_sent) begin
-                            // All coefficients consumed — go flush
-                            coeff_idx_nxt = coeff_idx; // Hold (no more reads)
-                            state_nxt     = S_FLUSH;
-                        end else begin
-                            coeff_idx_nxt = coeff_idx + $clog2(NCOEFF)'(COEFF_STEP);
-                        end
+                    if (coeff_idx == $clog2(NCOEFF)'(LAST_IDX_VAL)) begin
+                        // All coefficients consumed — go flush
+                        coeff_idx_nxt = coeff_idx; // Hold (no more reads)
+                        state_nxt     = S_FLUSH;
+                    end else begin
+                        coeff_idx_nxt = coeff_idx + $clog2(NCOEFF)'(COEFF_STEP);
                     end
+                end
+
+                // ── Issue read request if buffer can accept 6 more bytes ──
+                if (coeff_idx_nxt <= $clog2(NCOEFF)'(LAST_IDX_VAL) && (fill_nxt <= 4'd6) && !rd_pending_q && !rd_valid_i) begin
+                    rd_req_o = 1'b1;
                 end else if (!can_emit && coeff_idx > $clog2(NCOEFF)'(LAST_IDX_VAL)) begin
                     // All reads issued, buffer < 8 bytes, go flush
                     state_nxt = S_FLUSH;
@@ -194,7 +196,7 @@ module coeff_to_axis_packer #(
                     // Assert t_last only if controller says this is the last segment
                     t_last_o  = is_last_lat;
                     // t_keep: fill_count valid bytes
-                    t_keep_o  = (8'hFF >> (4'd8 - fill_count[2:0]));
+                    t_keep_o  = (fill_count >= 4'd8) ? 8'hFF : (8'hFF >> (4'd8 - fill_count));
 
                     if (t_ready_i) begin
                         buf_nxt   = '0;
@@ -236,6 +238,16 @@ module coeff_to_axis_packer #(
             if (absorb_poly) begin
                 cur_poly_id <= poly_id_i;
                 is_last_lat <= is_last_i;
+            end
+
+            if (state == S_IDLE) begin
+                rd_pending_q <= 1'b0;
+            end else begin
+                if (rd_req_o && !rd_valid_i) begin
+                    rd_pending_q <= 1'b1;
+                end else if (rd_valid_i && !rd_req_o) begin
+                    rd_pending_q <= 1'b0;
+                end
             end
         end
     end

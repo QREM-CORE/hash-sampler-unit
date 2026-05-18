@@ -63,6 +63,9 @@ module hash_sampler_unit #(
     input  wire [XOF_LEN_WIDTH-1:0]             xof_len_i,
     input  wire                                 is_eta3_i,
 
+    // Sticky done signal: set on completion and cleared by start_i
+    output logic                                hsu_done_o,
+
     input  wire [$clog2(NUM_POLYS)-1:0]         poly_id_i,
     input  wire seed_id_e                       seed_id_i,
     input  wire [7:0]                           row_i,
@@ -88,7 +91,6 @@ module hash_sampler_unit #(
     output logic [3:0][$clog2(NCOEFF)-1:0]      hsu_wr_idx_o,
     output logic [3:0][COEFF_W-1:0]             hsu_wr_data_o,
     input  wire                                 hsu_stall_i,
-    output logic                                hsu_done_o,
 
     // ── Poly Memory Reader Input (MODE_ABSORB_POLY) ───────────────────────────
     output logic [$clog2(NUM_POLYS)-1:0]        hsu_rd_poly_id_o,
@@ -187,6 +189,9 @@ module hash_sampler_unit #(
     // Internal State
     // ==========================================================
 
+    // Sticky done register: latches high when operation completes, cleared by start_i.
+    logic                          done_r;
+
     // Seed input beat counter (used for t_last in seed path)
     logic [$clog2(SEED_BEATS)-1:0] seed_rd_beat_cnt;
     logic                          seed_beat_last;
@@ -201,6 +206,24 @@ module hash_sampler_unit #(
                 seed_rd_beat_cnt <= '0;
             else if (input_sel_i == 2'b00 && hsu_seed_rvalid_i && keccak_t_ready_o)
                 seed_rd_beat_cnt <= seed_rd_beat_cnt + 1;
+        end
+    end
+
+    // --- Sticky Done Register ---
+    // Latches high on the cycle each mode completes. Stays high until start_i pulses.
+    always_ff @(posedge clk or posedge rst) begin
+        if (rst)
+            done_r <= 1'b0;
+        else if (start_i)
+            done_r <= 1'b0;
+        else if (!done_r) begin
+            unique case (hsu_mode_i)
+                MODE_SAMPLE_NTT:                          done_r <= sample_ntt_done;
+                MODE_SAMPLE_CBD:                          done_r <= sample_cbd_done;
+                MODE_HASH_SHA3_256, MODE_HASH_SHA3_512,
+                MODE_HASH_SHAKE256, MODE_ABSORB_POLY:     done_r <= keccak_t_valid_o && keccak_t_last_o && keccak_t_ready_i;
+                default:                                  done_r <= 1'b0;
+            endcase
         end
     end
 
@@ -481,7 +504,7 @@ module hash_sampler_unit #(
         hsu_wr_en_o          = 4'b0;
         hsu_wr_idx_o         = '0;
         hsu_wr_data_o        = '0;
-        hsu_done_o           = 1'b0;
+        hsu_done_o           = done_r;
 
         hsu_seed_req_o       = 1'b0;
         hsu_seed_we_o        = 1'b0;
@@ -507,7 +530,7 @@ module hash_sampler_unit #(
                 hsu_wr_en_o          = sample_ntt_wr_en;
                 hsu_wr_idx_o         = sample_ntt_wr_idx;
                 hsu_wr_data_o        = sample_ntt_wr_data;
-                hsu_done_o           = sample_ntt_done;
+
             end
 
             MODE_SAMPLE_CBD: begin
@@ -518,7 +541,7 @@ module hash_sampler_unit #(
                 hsu_wr_en_o          = sample_cbd_wr_en;
                 hsu_wr_idx_o         = sample_cbd_wr_idx;
                 hsu_wr_data_o        = sample_cbd_wr_data;
-                hsu_done_o           = sample_cbd_done;
+
             end
 
             MODE_HASH_SHA3_256, MODE_HASH_SHA3_512, MODE_HASH_SHAKE256: begin
@@ -526,18 +549,10 @@ module hash_sampler_unit #(
                 else if (hsu_mode_i == MODE_HASH_SHA3_512) keccak_mode_sel = SHA3_512;
                 else                                        keccak_mode_sel = SHAKE256;
 
-                if (hsu_mode_i == MODE_HASH_SHA3_512 && sha512_beat_cnt >= 3'd4) begin
-                    // Beats 4-7: trap σ locally, do NOT write to Seed RAM
-                    hsu_seed_req_o       = 1'b0;
-                    hsu_seed_we_o        = 1'b0;
-                    hsu_seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i     = 1'b1;   // Always accept (no backpressure needed)
-                end else begin
-                    hsu_seed_req_o       = keccak_t_valid_o;
-                    hsu_seed_we_o        = 1'b1;
-                    hsu_seed_wdata_o     = keccak_t_data_o;
-                    keccak_t_ready_i     = hsu_seed_ready_i;
-                end
+                hsu_seed_req_o       = keccak_t_valid_o;
+                hsu_seed_we_o        = 1'b1;
+                hsu_seed_wdata_o     = keccak_t_data_o;
+                keccak_t_ready_i     = hsu_seed_ready_i;
             end
 
             MODE_ABSORB_POLY: begin
