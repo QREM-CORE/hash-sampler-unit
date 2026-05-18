@@ -141,7 +141,7 @@ module hash_sampler_unit_tb();
     int          cfg_seed_words;
     int          cfg_xof_len;
 
-    logic [SEED_W-1:0] input_mem    [128];
+    logic [SEED_W-1:0] input_mem    [1024];
     logic [SEED_W-1:0] poly_mem     [NUM_POLYS][64];  // 64x64-bit beats (4 coeffs each)
     logic [SEED_W-1:0] expected_mem [128];
     // errors: alias to err_count for display; use err_count throughout
@@ -354,7 +354,8 @@ module hash_sampler_unit_tb();
             // input.hex: each line = one 64-bit packed beat holding 4×12-bit coefficients
             // Line layout: {16'b0, c3[11:0], c2[11:0], c1[11:0], c0[11:0]}
             begin
-                automatic logic [SEED_W-1:0] raw_mem [NUM_POLYS*64];
+                automatic logic [SEED_W-1:0] raw_mem [1024];
+                for (int i = 0; i < 1024; i++) raw_mem[i] = '0;
                 $readmemh(input_file, raw_mem);
                 for (int p = 0; p < cfg_poly_cnt; p++) begin
                     for (int b = 0; b < 64; b++) begin
@@ -362,7 +363,7 @@ module hash_sampler_unit_tb();
                     end
                 end
                 // Also load into input_mem for potential subsequent seed phase
-                for (int i = 0; i < 128; i++) input_mem[i] = raw_mem[i];
+                for (int i = 0; i < 1024; i++) input_mem[i] = raw_mem[i];
             end
 
             input_sel_i  = 1'b1;
@@ -386,10 +387,14 @@ module hash_sampler_unit_tb();
                 input_sel_i  = 1'b0; // Switch to Seed Memory
                 for (int i = 0; i < cfg_seed_words; i++) begin
                     // Read from input_mem (which was loaded from input.hex after poly data)
+                    // The poly data takes cfg_poly_cnt * 64 words in raw_mem.
+                    // Actually, test_vectors for H have poly and seed concatenated.
+                    hsu_seed_rdata_i  = input_mem[cfg_poly_cnt * 64 + i];
                     hsu_seed_rvalid_i = 1'b1;
                     absorb_last_i     = (i == cfg_seed_words - 1) ? 1'b1 : 1'b0;
-                    wait (DUT.keccak_t_ready_o);
-                    @(posedge clk);
+                    do begin
+                        @(posedge clk);
+                    end while (!DUT.keccak_t_ready_o);
                 end
                 hsu_seed_rvalid_i = 1'b0;
                 absorb_last_i     = 1'b0;
