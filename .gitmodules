@@ -13,3 +13,6 @@
 [submodule "verif/mlkem-python"]
 	path = verif/mlkem-python
 	url = ../mlkem-python.git
+[submodule "docs"]
+	path = docs
+	url = ../qrem-docs.git
