@@ -13,3 +13,4 @@
 [submodule "verif/mlkem-python"]
 	path = verif/mlkem-python
 	url = ../mlkem-python.git
+	branch = main
