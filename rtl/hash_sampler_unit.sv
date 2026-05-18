@@ -19,7 +19,7 @@
  *                   Must not be pulsed again until packer_done_o is high.
  *   absorb_last_i : Must be high on the LAST segment (poly or seed) before squeeze.
  *                   Gates t_last into Keccak. Low for all intermediate segments.
- *   input_sel_i   : 0 = Seed Memory feed, 1 = Poly Memory Reader (via packer).
+ *   input_sel_i   : 0 = Seed Mem, 1 = Poly Mem Reader (via packer), 2 = Raw AXI-Stream.
  *
  * Example: H(t_hat[0] || t_hat[1] || rho)
  *   1. start_i=1, hsu_mode_i=MODE_ABSORB_POLY
@@ -72,7 +72,7 @@ module hash_sampler_unit #(
     input  wire [7:0]                           col_i,
     input  wire [7:0]                           cbd_n_i,
 
-    // Selects Keccak input source: 0 = Seed Memory, 1 = Poly Memory Reader
+    // Selects Keccak input source: 0 = Seed Mem, 1 = Poly Mem Reader, 2 = Raw AXI-Stream
     input  wire  [1:0]                          input_sel_i,
 
     // Pulse once per poly to absorb (MODE_ABSORB_POLY). Decoupled from start_i.

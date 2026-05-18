@@ -18,14 +18,15 @@ The HSU features a dynamic demux/mux routing architecture that allows the Keccak
 graph LR
     subgraph HSU["Hash-Sampler Unit (HSU)"]
         direction LR
-        S_AXI["AXI-S Sink (In)"] --> KCORE["Keccak Core<br/>(1-Cycle Round)"]
-        KCORE --> DMUX["Routing Demux"]
+        SEED["Seed Mem Port"] --> KCORE
+        P_RD["Poly Mem Reader"] --> KCORE
+        AXIS["Raw AXI-S Sink"] --> KCORE
+        KCORE["Keccak Core<br/>(1-Cycle Round)"] --> DMUX["Routing Demux"]
         DMUX -- SHAKE128 --> NTT["Sample NTT<br/>(Rejection)"]
         DMUX -- SHAKE256 --> CBD["Sample CBD<br/>(η=2,3)"]
-        DMUX -- Bypass --> MUX["Output Mux"]
-        NTT --> MUX
-        CBD --> MUX
-        MUX --> M_AXI["AXI-S Source (Out)"]
+        DMUX -- Bypass --> SEED_W["Seed Mem (Write)"]
+        NTT --> P_WR["Poly Mem Writer"]
+        CBD --> P_WR
     end
 
     %% Premium Hardware Styling
@@ -35,9 +36,9 @@ graph LR
     classDef sampler fill:#fffde7,stroke:#f9a825,color:#f57f17,font-weight:bold;
     classDef hsu fill:none,stroke:#90a4ae,stroke-width:2px,stroke-dasharray: 5 5;
 
-    class S_AXI,M_AXI io;
+    class SEED,P_RD,AXIS,SEED_W,P_WR io;
     class KCORE core;
-    class DMUX,MUX router;
+    class DMUX router;
     class NTT,CBD sampler;
     class HSU hsu;
 ```
@@ -57,11 +58,11 @@ The unit assumes one of five primary modes defined in `hash_sample_pkg::hs_mode_
 
 | Enum Name | Keccak Op | Sampler Layer | Security (η) | ML-KEM Operation |
 | :--- | :--- | :--- | :--- | :--- |
-| `MODE_SAMPLE_NTT` | SHAKE128 | Rejection | N/A | **Matrix A** Generation |
-| `MODE_SAMPLE_CBD` | SHAKE256 | CBD | η=2 or η=3 | **s, e, e1, e2** Generation |
-| `MODE_HASH_SHA3_256` | SHA3-256 | Bypass | N/A | Hash functions **H(p, m, c)** |
-| `MODE_HASH_SHA3_512` | SHA3-512 | Bypass | N/A | Hash functions **G(d, m, h)** |
-| `MODE_HASH_SHAKE256` | SHAKE256 | Bypass | N/A | Function **J(z, c)** |
+| `MODE_SAMPLE_NTT` | SHAKE128 | Seed Mem | Rejection | **Matrix A** Generation |
+| `MODE_SAMPLE_CBD` | SHAKE256 | Seed Mem | CBD | **s, e, e1, e2** Generation |
+| `MODE_HASH_SHA3_256` | SHA3-256 | Seed Mem / Raw AXI | Bypass | Hash functions **H(p, m, c)** |
+| `MODE_HASH_SHA3_512` | SHA3-512 | Seed Mem / Raw AXI | Bypass | Hash functions **G(d, m, h)** |
+| `MODE_HASH_SHAKE256` | SHAKE256 | Seed Mem / Raw AXI | Bypass | Function **J(z, c)** |
 
 > [!NOTE]
 > Sampler outputs are 48-bit (4 x 12-bit coeffs) which are zero-padded to 64-bit `t_data_o`: `{16'b0, data[47:0]}`.
@@ -73,19 +74,22 @@ The unit assumes one of five primary modes defined in `hash_sample_pkg::hs_mode_
 ### Control & Status
 - **`start_i`**: Pulse (1 cycle) to begin a hashing/sampling operation.
 - **`hsu_mode_i`**: Selects routing and hashing parameters. Must be stable on `start_i`.
+- **`input_sel_i`**: Selects Keccak input source (0 = Seed Mem, 1 = Poly Mem Reader, 2 = Raw AXI-S).
+- **`absorb_poly_i`**: Pulse once per poly to absorb via packer. Wait for `packer_done_o`.
+- **`absorb_last_i`**: Must be high on the last absorption segment before Keccak squeezes.
 - **`is_eta3_i`**: (CBD Only) Set to `1` for ML-KEM-768/1024, `0` for ML-KEM-512.
-- **`xof_len_i`**: Defines total output bytes for SHAKE modes (0 = infinite/continuous).
+- **`xof_len_i`**: Defines total output bytes for SHAKE modes.
+- **Metadata**: `poly_id_i`, `seed_id_i`, `row_i`, `col_i`, `cbd_n_i`.
+- **`hsu_done_o`**: Sticky completion signal. Latches high when operation is fully complete.
+- **`packer_done_o`**: Asserts when poly reader packer finishes draining its gearbox buffer.
 
-### AXI4-Stream Ports
-| Port | Direction | Width | Description |
+### Memory & Data Ports
+| Interface | Type | Key Signals | Description |
 | :--- | :--- | :--- | :--- |
-| `t_data_i` | Sink | 64-bit | Input data (message/prefix) |
-| `t_valid_i` | Sink | 1-bit | Input valid |
-| `t_ready_o` | Sink | 1-bit | HSU ready to accept input |
-| `t_data_o` | Source | 64-bit | Output (Hash or 4x Coeffs) |
-| `t_valid_o` | Source | 1-bit | Output valid |
-| `t_ready_i` | Source | 1-bit | Downstream backpressure |
-| `t_last_o` | Source | 1-bit | Marks end of hash or 256th coeff |
+| **Poly Mem Writer** | Output | `hsu_req_o`, `hsu_wr_data_o`, `hsu_wr_en_o` | High-throughput sampler output port (NTT/CBD) |
+| **Poly Mem Reader** | Input | `hsu_rd_data_i`, `hsu_rd_valid_i` | Source for multi-phase polynomial absorption |
+| **Seed Mem Port** | Bidir | `hsu_seed_wdata_o`, `hsu_seed_rdata_i` | Source for seed injection and sink for bypass hashes |
+| **Raw AXI-S Input** | Sink | `axis_t_data_i`, `axis_t_valid_i`, `axis_t_last_i` | Direct feed to Keccak for bypass operations |
 
 ---
 
