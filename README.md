@@ -113,6 +113,9 @@ The verification suite uses a Python-driven flow to generate vectors and run the
 # Generate test vectors and run all testcases in Verilator
 make run_hash_sampler_unit_tb SIM=verilator
 
+# Run a specific test (e.g. test_h)
+make run_hash_sampler_unit_tb SIM=verilator TEST=test_h
+
 # To run with ModelSim
 make run_hash_sampler_unit_tb SIM=modelsim
 ```
